@@ -40,9 +40,6 @@ PLAN.md §4「後台不知道螢幕存在、可在 PC 上測」的兌現 ——
 沒有 malloc。查詢後台完全沒有浮點；合成器的係數計算用 double（每 32 個
 取樣點才算一次），取樣迴圈本身是定點。
 
-沒有 malloc、沒有浮點數、沒有標準函式庫的檔案 I/O。
-`.DAT` 的記錄緩衝區由呼叫端提供，大小自己決定。
-
 ---
 
 ## 驗證
@@ -94,7 +91,8 @@ python firmware/compare.py 3000
 ## 還沒做
 
 - **SD 卡驅動**（`dict_read_fn` 的板子端實作）
-- **UI**：查詢框、結果頁、翻頁 —— 卡在 D3（字型 11×11 vs 16×16）
+- **UI**：查詢框、結果頁、翻頁。字型已定（16x16 2bit，見 tools/mkfont.py），
+  排版已有預覽（tools/ui_preview.py），但韌體端還沒寫
 - **注音 IME**：要搬 `pico_keyboard_ime_terminal`，該 repo 本機還沒 clone
 - **`dict_normalize_ec` 只有英文方向**。中文的正規化目前只是去頭尾空白，
   韌體端要等 IME 接上時一起處理
@@ -105,7 +103,7 @@ python firmware/compare.py 3000
 ## 合成器的比對
 
 ```
-firmwareuild_synth.bat
+firmware/build_synth.bat
 python firmware/compare_synth.py
 ```
 
