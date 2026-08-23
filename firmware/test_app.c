@@ -10,7 +10,7 @@
  *   test_app <DICT目錄> run <腳本> <輸出前綴>  跑一段腳本，[SNAP] 處存圖
  *
  * 腳本裡可列印字元照打，特殊鍵寫成 [ENTER] [BS] [ESC] [UP] [DOWN]
- * [PGUP] [PGDN] [F1] [SNAP]。加 @毫秒 表示按住多久，例如 [F1@800] ——
+ * [PGUP] [PGDN] [F1] [CAPS] [SNAP]。加 @毫秒 表示按住多久，例如 [F1@800] ——
  * 連發只有按住才測得到，預設的 50ms 永遠碰不到那條路。
  */
 
@@ -183,6 +183,11 @@ static void tick(const uint8_t rows[8])
     int i;
     for (i = 0; i < n; i++)
         app_key(&APP, &ev[i]);
+    /* CapsLock 不產生事件，狀態要另外抄過來（板子端同一個做法）。 */
+    if (APP.caps != (int)KEYS.caps) {
+        APP.caps = KEYS.caps;
+        APP.dirty = 1;
+    }
     NOW += 5;                    /* 板子上大約就是這個掃描週期 */
 }
 
@@ -234,6 +239,28 @@ static void press(uint8_t code)
     press_hold(code, 10);
 }
 
+/* 按一顆修飾鍵本身（CapsLock）。修飾鍵不產生按鍵事件，所以 press() 那條路
+ * 碰不到它 —— 但「按了 CapsLock 之後右下角有沒有立刻變」正是要測的東西。 */
+static void press_mod(uint8_t mod)
+{
+    uint8_t rows[8];
+    int r = 0, c = 0, i;
+
+    if (!find_mod(mod, &r, &c)) {
+        fprintf(stderr, "找不到修飾鍵 %d\n", mod);
+        exit(3);
+    }
+    memset(rows, 0, sizeof(rows));
+    for (i = 0; i < 10; i++)
+        tick(rows);
+    rows[r] |= (uint8_t)(1 << c);
+    for (i = 0; i < 10; i++)
+        tick(rows);
+    rows[r] &= (uint8_t)~(1 << c);
+    for (i = 0; i < 10; i++)
+        tick(rows);
+}
+
 static void snapshot(const char *prefix)
 {
     char path[512];
@@ -272,7 +299,8 @@ static const struct { const char *name; uint8_t code; } TOKENS[] = {
     { "TAB", KEY_TAB }, { "DEL", KEY_DEL },
     { "UP", KEY_UP }, { "DOWN", KEY_DOWN }, { "LEFT", KEY_LEFT },
     { "RIGHT", KEY_RIGHT }, { "PGUP", KEY_PGUP }, { "PGDN", KEY_PGDN },
-    { "F1", KEY_F1 }, { "F2", KEY_F2 }, { "F3", KEY_F3 }, { 0, 0 }
+    { "F1", KEY_F1 }, { "F2", KEY_F2 }, { "F3", KEY_F3 },
+    { "F9", KEY_F9 }, { 0, 0 }
 };
 
 static void run_script(const char *script, const char *prefix)
@@ -295,6 +323,9 @@ static void run_script(const char *script, const char *prefix)
             name[len] = 0;
             if (strcmp(name, "SNAP") == 0) {
                 snapshot(prefix);
+                hit = 1;
+            } else if (strcmp(name, "CAPS") == 0) {
+                press_mod(KEY_M_CAPS);
                 hit = 1;
             }
             {

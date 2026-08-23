@@ -461,8 +461,11 @@ void loop()
     scanMatrix(rows);
     int n = keys_update(&g_keys, rows, millis(), ev, KEYS_MAX_EVENTS);
     for (int i = 0; i < n; i++) {
-        // Fn+2 暫時借去當音訊自我測試（切換英漢/漢英還沒實作，要等注音 IME）。
-        if (ev[i].code == KEY_F2) {
+        // Fn+9 = 音訊自我測試。留著是因為它當初把「合成沒產出」與「音訊路徑
+        // 壞掉」兩種一模一樣的卡答聲分開了，下次接線動到還會需要。
+        // （本來借的是 Fn+2，但那顆現在是英漢/漢英切換 —— 撞在一起就會變成
+        // 「按切換卻發出嗶聲」。）
+        if (ev[i].code == KEY_F9) {
             Serial.println("test tone 1kHz");
             tone(1000, 300);
             continue;
@@ -473,6 +476,13 @@ void loop()
     // 緩衝區只有 1024 個樣本（16kHz 下 64ms），所以每一圈都要餵。查詞或
     // 重畫畫面會佔掉幾十毫秒，這也是為什麼發音時不要同時做那些事。
     audio_mixer_step();
+
+    // CapsLock 是修飾鍵，**不會產生按鍵事件** —— 所以不能等 app_key() 來更新
+    // 狀態格，否則要按下一個鍵右下角才會變。這裡直接看鍵盤層的狀態。
+    if (g_app.caps != (int)g_keys.caps) {
+        g_app.caps = g_keys.caps;
+        refresh_status();
+    }
 
     // 播完了就把「音」收起來。只重畫右下角那一格，不整頁重畫。
     if (g_app.speaking && g_speak_src >= 0 &&
