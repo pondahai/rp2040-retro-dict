@@ -82,6 +82,9 @@ static FileCtx g_ec_idx, g_ec_dat, g_ecc_idx, g_font_file;
 static int sd_read_at(void *ctx, uint32_t off, uint32_t len, uint8_t *out)
 {
     FileCtx *fc = (FileCtx *)ctx;
+    // 讀 SD 是整支韌體最慢的動作，而音訊的雙緩衝要人定期去填。與其祈禱
+    // 主迴圈夠快，不如**在慢的地方順手餵一次** —— 沒東西要填時它會立刻返回。
+    audio_mixer_step();
     if (!fc->f)
         return -1;
     if (!fc->f.seek(off))
@@ -161,6 +164,8 @@ static void blit()
 {
     tft.startFrame(0, 0, UI_W - 1, UI_H - 1);
     for (int y = 0; y < UI_H; y++) {
+        if ((y & 31) == 0)
+            audio_mixer_step();      // 整張畫面約 20ms，中途也要餵
         uint8_t *buf = g_line[y & 1];
         fbuf_line_rgb565(&g_fb, y, buf);
         tft.waitTransferDone();

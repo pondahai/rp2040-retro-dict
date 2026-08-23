@@ -14,8 +14,10 @@
 #ifndef AUDIO_H_FILE
 #define AUDIO_H_FILE
 
-// #define AUDIO_BUFFER_SIZE 1024
-#define AUDIO_BUFFER_SIZE 1024
+// 原本是 1024（16kHz 下 64ms）。字典跟 InfoNES 不一樣：重畫一張畫面要從
+// SD 讀上百次字模，主迴圈一次卡 100ms 以上是常態，64ms 的緩衝區會來不及
+// 填，ISR 照樣換緩衝區 -> 舊的那塊再播一次，聽起來就是 "aaaaple"。
+#define AUDIO_BUFFER_SIZE 4096
 #define AUDIO_MAX_SOURCES 2
 
 #include <stdbool.h>
