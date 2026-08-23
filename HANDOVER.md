@@ -1,13 +1,14 @@
 # HANDOVER
 
 給下一個接手的人（或下一段對話）。日期：2026-08-23。
-最後更新：U3 中文第一關通過，英文接上同一個合成器。U1 關閉、D2 有答案。
+最後更新：查詢後台的 C 實作完成並與 Python 逐筆比對通過。
 
 ---
 
 ## 現況一句話
 
-**格式已定稿、PC 端轉檔工具已可用；韌體端仍是零程式碼。**
+**格式定稿、轉檔工具可用、合成器可用、查詢後台的 C 版已驗證。
+仍未碰過任何硬體。**
 格式見 [docs/FORMAT.md](docs/FORMAT.md)，工具見 [tools/README.md](tools/README.md)。
 工具已用**真實資料**跑過：EC 77 萬筆、CE 12.5 萬筆，SD 共約 108MB，
 查詢 16 / 13 次 SD 讀取，中文音節對應率 99.98%。
@@ -19,7 +20,9 @@
 
 - 已 `git init`，**沒有 remote**（要推上 GitHub 需先建 repo）
 - 追蹤中：`README.md` / `HANDOVER.md` / `docs/PLAN.md` / `.gitignore`
-- `tools/` 已有轉檔工具（純 Python，無第三方相依）
+- `tools/` 轉檔工具與合成器（純 Python，無第三方相依）
+- `firmware/` 查詢後台的 C 實作（1444 bytes / 靜態 RAM 0），
+  `python firmware/compare.py` 會跟 Python 參考實作逐筆比對
 - `LICENSE` 已補上（GPL-3.0，取自 PicoApple2-KeyboardTester）
 
 ---
