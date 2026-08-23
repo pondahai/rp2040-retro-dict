@@ -39,7 +39,7 @@ def parse(path, stats=None):
             ]
             if trad != simp:
                 fields.append((C.T_TRAD, trad.encode("utf-8")))
-            syl = pinyin.to_ids(py, stats=unknown)
+            syl = pinyin.to_ids(py, stats=stats, unknown=unknown)
             if syl:
                 fields.append((C.T_SYL_ZH, syl))
             yield C.Entry(key=key, fields=fields, rank=rank_ce(simp, senses))

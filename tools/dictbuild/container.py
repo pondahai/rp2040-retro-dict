@@ -262,15 +262,26 @@ class Dictionary:
                 hits.append(r)
         return hits
 
-    def prefix(self, key, limit=16):
-        """前綴候選。只讀索引不讀 .DAT —— rank 就在索引裡（§5）。"""
+    def prefix(self, key, limit=16, window=128):
+        """前綴候選。只讀索引不讀 .DAT —— rank 就在索引裡（§5）。
+
+        window 是關鍵：索引是**按鍵排序**的，常用詞不見得排在前面。真實資料上
+        打 `ap` 時，鍵序的前 16 筆全是 ap- 開頭的化學品編號，`apple` 排在
+        幾百筆之後。所以要掃一個較大的窗口再依 rank 取前 limit 筆。
+
+        window=128 表示最多 8 個扇區（128/16），對 SD 是可接受的成本；
+        調小會讓常用詞消失，調大只是多幾次讀取。
+        """
         i = self.lower_bound(key)
+        pre = key[:KEY24]
         out = []
-        while len(out) < limit and i < self.hdr.rec_count:
+        scanned = 0
+        while scanned < window and i < self.hdr.rec_count:
             key24, off, ln, rank = self._read_index(i)
-            if not key24.startswith(key[:KEY24]):
+            if not key24.startswith(pre):
                 break
             out.append((key24.rstrip(b"\0"), off, ln, rank))
             i += 1
-        out.sort(key=lambda t: (t[3], t[0]))
-        return out
+            scanned += 1
+        out.sort(key=lambda t: (t[3], len(t[0]), t[0]))
+        return out[:limit]

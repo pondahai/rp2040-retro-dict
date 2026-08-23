@@ -83,8 +83,12 @@ def _spell(initial, final):
     return initial + final
 
 
+# 規則生不出、但真實存在的音節。目前只有一個：哎「哟」。
+_EXTRA = ["yo"]
+
+
 def _build_table():
-    seen = []
+    seen = list(_EXTRA)
     mark = set()
     for ini in INITIALS:
         for fin in _GROUPS[ini]:

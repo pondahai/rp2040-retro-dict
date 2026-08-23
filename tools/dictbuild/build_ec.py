@@ -13,6 +13,23 @@ from .normalize import normalize_ec
 csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
 
 
+_NL = chr(10)
+
+
+def _unescape(v):
+    r"""ECDICT 在 CSV 欄位裡把換行寫成**字面的兩個字元** \ 和 n，不是真換行。
+
+    不還原的話，韌體端會把 `\n` 原封不動印在螢幕上 —— 實測 apple 的中文
+    釋義就長這樣（`苹果, 家伙\n[医] 苹果`）。FORMAT.md §4.1 規定多義項用
+    真換行分隔，所以還原要在轉檔期做完。
+    """
+    if not v:
+        return ""
+    return (v.replace("\\r\\n", _NL)
+             .replace("\\n", _NL)
+             .replace("\\r", _NL))
+
+
 def _u16(v):
     try:
         n = int(v)
@@ -30,8 +47,8 @@ def parse(path, stats=None, min_rank=None):
             if not key:
                 stats["dropped_empty_key"] = stats.get("dropped_empty_key", 0) + 1
                 continue
-            trans = (row.get("translation") or "").strip()
-            defin = (row.get("definition") or "").strip()
+            trans = _unescape(row.get("translation")).strip()
+            defin = _unescape(row.get("definition")).strip()
             if not trans and not defin:
                 stats["dropped_no_sense"] = stats.get("dropped_no_sense", 0) + 1
                 continue
@@ -41,7 +58,7 @@ def parse(path, stats=None, min_rank=None):
                              (C.T_DEF_EN, defin),
                              (C.T_POS, row.get("pos")),
                              (C.T_EXCHANGE, row.get("exchange"))):
-                val = (val or "").strip()
+                val = _unescape(val).strip()
                 if val:
                     fields.append((tag, val.encode("utf-8")))
             freq = (_u16(row.get("collins")), _u16(row.get("bnc")), _u16(row.get("frq")))

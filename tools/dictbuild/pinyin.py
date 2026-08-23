@@ -12,28 +12,55 @@ from . import syllable
 NEUTRAL = 0
 
 
-def parse_syllables(text):
+def parse_syllables(text, stats=None):
     """把 `ni3 hao3` 這種字串拆成 [(音節, 聲調), ...]。
 
-    無法解析的 token 回 (None, 0)，由呼叫端決定是丟棄還是記警告 ——
+    CC-CEDICT 的拼音欄位裡混了三種不是漢語音節的東西，都在這裡處理掉，
+    以免它們被當成「音節表漏了」而污染錄音清單：
+
+      - `r5` 兒化韻（`yi1 xia4 r5` = 一下儿）—— 併入前一個音節，見下
+      - `xx5` 資料本身標示「無拼音」（如疊字符號 々）
+      - 大寫單字母 = 外來語裡的字母名（`A quan1 r5` = A圈兒），不是漢語音節
+
+    無法解析的 token 回 (None, 0)，由呼叫端決定丟棄或記警告 ——
     這個模組不做政策判斷。
     """
     out = []
-    for tok in text.replace("·", " ").split():
-        tok = tok.strip().lower()
+    for raw in text.replace("·", " ").split():
+        tok = raw.strip()
         if not tok:
             continue
+        # 大寫單字母要在轉小寫**之前**判斷，否則會跟真音節 a / e / o 混淆
+        if len(tok) == 1 and tok.isalpha() and tok.isupper():
+            _bump(stats, "latin_letters")
+            continue
+        tok = tok.lower()
         tone = NEUTRAL
         if tok[-1].isdigit():
             d = int(tok[-1])
             tok = tok[:-1]
             tone = NEUTRAL if d == 5 else d
+        if tok == "xx":
+            _bump(stats, "no_pinyin_marker")
+            continue
+        if tok == "r" and out:
+            # 兒化：不是獨立音節，而是把前一個音節的韻尾捲舌化。真正的合成
+            # 要用專門的兒化錄音才自然；v1 近似成後接一個輕聲 er，並記數，
+            # 讓 U3 實驗能評估這個近似聽起來可不可以接受。
+            _bump(stats, "erhua")
+            out.append(("er", NEUTRAL))
+            continue
         tok = tok.replace("u:", "v")          # CC-CEDICT 的 ü
         if not tok.isalpha():
-            out.append((None, 0))             # 標點、拉丁字母詞、罕見符號
+            out.append((None, 0))             # 標點、罕見符號
             continue
         out.append((tok, tone))
     return out
+
+
+def _bump(stats, key):
+    if stats is not None:
+        stats[key] = stats.get(key, 0) + 1
 
 
 def apply_sandhi(sylls):
@@ -61,9 +88,9 @@ def apply_sandhi(sylls):
     return [tuple(x) for x in s]
 
 
-def to_ids(text, sandhi=True, stats=None):
+def to_ids(text, sandhi=True, stats=None, unknown=None):
     """CC-CEDICT 拼音字串 → 可直接寫進 SYL_ZH 欄位的 bytes（u16 陣列）。"""
-    sylls = parse_syllables(text)
+    sylls = parse_syllables(text, stats=stats)
     if sandhi:
         sylls = apply_sandhi(sylls)
     ids = []
@@ -72,8 +99,8 @@ def to_ids(text, sandhi=True, stats=None):
             continue
         sid = syllable.syllable_id(base, tone)
         if sid == syllable.UNKNOWN:
-            if stats is not None:
-                stats[base] = stats.get(base, 0) + 1
+            if unknown is not None:
+                unknown[base] = unknown.get(base, 0) + 1
             continue
         ids.append(sid)
     return struct.pack("<%dH" % len(ids), *ids)
