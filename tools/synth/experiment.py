@@ -11,7 +11,7 @@ import math
 import os
 import sys
 
-from . import prosody, voice
+from . import prosody, spectrum, voice
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                    "..", "..", "out", "audio")
@@ -205,6 +205,41 @@ def objective_checks():
     return ok
 
 
+def spectral_checks():
+    """母音的能量該落在自己的共振峰上。這條驗不過就是嘯音。"""
+    print()
+    print("頻譜檢查（母音之間必須有差別）")
+    ok = True
+    got = {}
+    for lbl, base in (("a", "ma"), ("i", "mi"), ("u", "mu")):
+        smp = voice.synth_syllable(base, 1, 300, prosody.TONE_CURVES[1])
+        body = smp[len(smp) // 3:]
+        vals = spectrum.band_energy(body, voice.SR, spectrum.BANDS)
+        pk = spectrum.peaks(body, voice.SR)
+        got[lbl] = (vals, pk)
+        print("  母音 %s  >3kHz %4.1f%%  峰值 %s"
+              % (lbl, 100 * (vals[4] + vals[5]),
+                 " ".join("%.0f" % f for f in pk)))
+
+    def want(cond, what):
+        nonlocal ok
+        print(("  PASS  " if cond else "  FAIL  ") + what)
+        if not cond:
+            ok = False
+
+    for lbl in ("a", "i", "u"):
+        vals = got[lbl][0]
+        want(vals[4] + vals[5] < 0.15,
+             "母音 %s 的高頻能量 <15%%（超過就是嘯音）" % lbl)
+    # a 的 F1=800、i 的 F2=2300，兩者必須量得出差別
+    want(any(600 < f < 1000 for f in got["a"][1]), "母音 a 有 F1 附近的峰")
+    want(any(2000 < f < 2700 for f in got["i"][1]), "母音 i 有 F2 附近的峰")
+    want(got["a"][0][1] > got["i"][0][1] * 3,
+         "a 與 i 的頻譜明顯不同（相同就代表共振峰沒作用）")
+    return ok
+
+
+
 # ---------------------------------------------------------------------------
 
 def run():
@@ -222,6 +257,7 @@ def run():
         print("  %-18s %4.2fs  %s" % (name + ".wav", dur, note))
 
     ok = objective_checks()
+    ok = spectral_checks() and ok
     print()
     print("客觀部分：" + ("全部通過" if ok else "有項目失敗"))
     print()

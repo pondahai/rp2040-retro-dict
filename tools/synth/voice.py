@@ -19,6 +19,8 @@ import random
 
 SR = 16000          # 取樣率。當年的裝置就在 8–10kHz，16k 已經是寬裕的
 BASE_F0 = 110.0     # 基頻。偏低，聽起來像 80 年代的男聲合成
+GLOTTAL_BW = 100.0  # 聲門低通的頻寬（Klatt 的 RGP 慣用值）
+GLOTTAL_GAIN = 260.0  # 補回低通吃掉的音量
 
 # (F1, F2, F3) 共振峰目標，單位 Hz。
 VOWELS = {
@@ -120,7 +122,15 @@ def _formant_track(targets, n):
 
 
 def _voiced_source(n, f0_track):
-    """濁音聲源：週期脈衝。刻意保留豐富諧波，那個嗡嗡聲就是年代感來源。"""
+    """濁音聲源：脈衝串 + **聲門低通**。
+
+    這裡的低通不是修飾，是必要的。裸脈衝串的頻譜一路平到 Nyquist，餵進
+    共振器會把高頻共振峰全力激發 —— 實測 65% 的能量落在 3kHz 以上，
+    聽起來就是純粹的嘯音，完全不像母音。
+
+    真實聲帶的頻譜每八度掉約 12dB。用一個 F=0 的二階共振器（Klatt 的
+    glottal pole）就能得到這個斜率。
+    """
     out = []
     phase = 0.0
     for i in range(n):
@@ -129,9 +139,12 @@ def _voiced_source(n, f0_track):
             phase -= 1.0
             out.append(1.0)
         else:
-            # 脈衝之後補一小段衰減，比純脈衝柔和，不會刺耳
             out.append(-0.25 if phase < 0.06 else 0.0)
-    return out
+
+    # **一級**，不是兩級。兩級是 -24dB/oct，會把 F2 F3 整個吃掉 ——
+    # 實測能量 92% 擠在 500Hz 以下，母音之間完全聽不出差別。
+    gp = Resonator()
+    return [gp.run(x, 0.0, GLOTTAL_BW) * GLOTTAL_GAIN for x in out]
 
 
 def _noise(n, gain=1.0):
@@ -222,10 +235,19 @@ def synth_syllable(base, tone, dur_ms, f0_curve, debug=None):
     out = []
     for i in range(total):
         f1, f2, f3 = track[i]
-        y = r1.run(src[i], f1, 70)
-        y = r2.run(y, f2, 110)
-        y = r3.run(y, f3, 180)
+        y = r1.run(src[i], f1, 90)
+        y = r2.run(y, f2, 130)
+        y = r3.run(y, f3, 200)
         out.append(y)
+
+    # --- 嘴唇輻射 ---
+    # 聲音離開嘴唇時等效於一次微分（+6dB/oct）。與上面的聲門低通
+    # （-12dB/oct）合起來是 -6dB/oct，這才是母音該有的整體斜率。
+    prev = 0.0
+    for i in range(total):
+        cur = out[i]
+        out[i] = cur - prev
+        prev = cur
 
     # --- 音量包絡 ---
     atk, rel = _ms(12), _ms(30)
