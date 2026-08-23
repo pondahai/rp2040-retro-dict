@@ -27,6 +27,8 @@
 #define KEY_PGUP   0x85
 #define KEY_PGDN   0x86
 #define KEY_F1     0x91          /* F1..F10 連號 */
+#define KEY_F2     0x92
+#define KEY_F3     0x93
 #define KEY_F10    0x9A
 
 /* 修飾鍵位元 */

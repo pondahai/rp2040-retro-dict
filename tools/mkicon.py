@@ -24,13 +24,15 @@ import struct
 import subprocess
 import sys
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 ASSETS = os.path.join(ROOT, "assets")
 SQUARE = os.path.join(ASSETS, "retrodict_icon.png")
 SQUARE_MAX = 768          # 進版控的來源圖上限；96px 的縮圖用不到更大
+BG = (255, 255, 255)      # 去背後的底色：圖示是白紙的書，白底才連成一片
+DROP_TOL = 110            # flood fill 門檻，要吃得掉書本下緣的投影
 RAW = os.path.join(ASSETS, "RetroDict.ino.RAW")
 CHECK = os.path.join(ASSETS, "retrodict_icon_96.png")
 
@@ -38,12 +40,36 @@ W = H = 96
 EXPECT = W * H * 2
 
 
+def drop_background(im):
+    """從四角 flood fill 換成白底。
+
+    **不用 make_thumb.py 的 `--drop-bg`**：那支腳本用同一個 `--drop-tol`
+    做兩件事 —— flood fill 的門檻，以及「這一角是不是已經等於底色」的判斷。
+    底色給白時，來源圖的灰底 (181,186,198) 距離白只有 74，小於門檻 110，
+    四個角就全被判定成「本來就是底色」而整段跳過，結果是安靜地沒去背。
+    （底色給黑不會踩到，因為灰離黑很遠 —— 所以這個 bug 只在淺色底出現。）
+
+    門檻要 110 才吃得掉書本下緣的**投影**：投影跟灰底不同色、也不與四角
+    連通，60 的話會在圖示下方留一圈鋸齒狀髒邊。書本的深色描邊離得夠遠，
+    不會被吃掉。
+
+    在縮放前做：全解析度下背景與主體的邊界最乾淨，之後縮小時 LANCZOS
+    會自然把邊緣混進底色，不會留下一圈灰邊。
+    """
+    for corner in [(0, 0), (im.width - 1, 0),
+                   (0, im.height - 1), (im.width - 1, im.height - 1)]:
+        if im.getpixel(corner)[:3] == BG:
+            continue
+        ImageDraw.floodfill(im, corner, BG, thresh=DROP_TOL)
+    return im
+
+
 def make_square(src_path):
     """置中裁成正方形。原圖是寬幅的，直接丟給 --fit 會把書的上下邊緣切掉。"""
     im = Image.open(src_path).convert("RGB")
     w, h = im.size
     if w == h:
-        return im
+        return drop_background(im)      # 已經是正方形也還是要去背
     side = min(w, h)
     half = int(side * 0.98) // 2          # 留一點邊，圖示不要頂到框
     cx, cy = w // 2, h // 2
@@ -51,6 +77,7 @@ def make_square(src_path):
            min(w, cx + half), min(h, cy + half))
     print("裁切 %s -> %s" % (im.size, (box[2] - box[0], box[3] - box[1])))
     im = im.crop(box)
+    im = drop_background(im)
     if im.size[0] > SQUARE_MAX:
         im = im.resize((SQUARE_MAX, SQUARE_MAX), Image.LANCZOS)
     return im
@@ -119,12 +146,13 @@ def main(argv):
     sq.save(SQUARE)
     print("來源正方圖：%s（%dx%d）" % (os.path.normpath(SQUARE), *sq.size))
 
-    # 去背：來源圖是有灰底的 JPEG，載入器選單是深色的，不去背會看到一塊
-    # 灰方塊。tol 要夠大才吃得掉書本下緣的**投影** —— 投影跟灰底不同色、
+    # 去背：來源圖是有灰底的 JPEG，不去背會看到一塊灰方塊。底色用白 ——
+    # 圖示本身是白紙的書，配白底才連成一片，配黑底反而會框出一個方塊。
+    # tol 要夠大才吃得掉書本下緣的**投影** —— 投影跟灰底不同色、
     # 也不與四角連通，tol 60 會在黑底上留下一圈鋸齒狀髒邊（實測 110 乾淨，
     # 而且書本的深色描邊還在）。
     r = subprocess.run([sys.executable, thumb, SQUARE, "--fit",
-                        "--drop-bg", "--drop-tol", "110", "--bg", "000000",
+                        "--drop-bg", "--drop-tol", "110", "--bg", "FFFFFF",
                         "-o", RAW], capture_output=True)
     out = (r.stdout + r.stderr).decode("utf-8", "replace").strip()
     if out:

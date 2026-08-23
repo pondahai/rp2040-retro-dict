@@ -197,6 +197,25 @@ static void pcm_sink(void *ctx, const uint8_t *pcm, int n)
     g_pcm_n += n;
 }
 
+// 純方波測試音。用途是**把病因切開**：按 Fn+2 聽得到嗶聲，就表示 PWM、DMA、
+// 接線、喇叭都是好的，問題在合成那一側；還是只有卡答聲，那就是音訊路徑本身。
+// 卡答聲的來源是 DMA 沒有波形可播，PWM 位準只跳了一下。
+static void tone(int hz, int ms)
+{
+    int n = SYN_SR * ms / 1000;
+    int half = SYN_SR / (hz * 2);
+    if (n > SPEAK_MAX_PCM)
+        n = SPEAK_MAX_PCM;
+    if (half < 1)
+        half = 1;
+    for (int i = 0; i < n; i++) {
+        // 兩端不要用 0/254，直流偏移太大會讓喇叭「砰」一聲
+        g_pcm[i] = ((i / half) & 1) ? 180 : 74;
+    }
+    g_pcm_n = n;
+    audio_play(g_pcm, n);
+}
+
 static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
                      const char *fallback)
 {
@@ -209,7 +228,13 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
         speech_ids(&g_speech, ids, nbytes, is_zh);
     else
         speech_spell(&g_speech, fallback);   // 查不到就逐字母唸
-    Serial.printf("speak: %d samples\n", g_pcm_n);
+    Serial.printf("speak: %d samples (ids=%d)\n", g_pcm_n, nbytes / 2);
+    if (g_pcm_n <= 0) {
+        // 合成一個取樣點都沒產出。低頻短嗶 = 「有收到 Fn+1，但沒東西可唸」，
+        // 跟音訊路徑壞掉的卡答聲區分得開。
+        tone(200, 120);
+        return;
+    }
     audio_play(g_pcm, g_pcm_n);
 }
 // 40KB：兩張碼位表 + 窄字前進寬度 + ASCII 字模，實測要 39,123 bytes。
@@ -365,8 +390,15 @@ void loop()
 
     scanMatrix(rows);
     int n = keys_update(&g_keys, rows, millis(), ev, KEYS_MAX_EVENTS);
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < n; i++) {
+        // Fn+2 暫時借去當音訊自我測試（切換英漢/漢英還沒實作，要等注音 IME）。
+        if (ev[i].code == KEY_F2) {
+            Serial.println("test tone 1kHz");
+            tone(1000, 300);
+            continue;
+        }
         app_key(&g_app, &ev[i]);
+    }
 
     if (app_render(&g_app))
         blit();
