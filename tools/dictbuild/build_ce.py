@@ -53,12 +53,17 @@ def rank_ce(word, senses):
     return max(0, min(r, 0xFFFF))
 
 
-def build(src, idx_path, dat_path, source_tag="CC-CEDICT"):
+def build(src, idx_path, dat_path, source_tag="CC-CEDICT",
+          common_idx_path=None, common_max=20000):
     stats = {}
     entries = list(parse(src, stats))
-    n, size = C.build(entries, idx_path, dat_path,
-                      encoding=C.ENC_UTF8, direction=C.DIR_CE,
-                      source_tag=source_tag)
+    n, size, common_n = C.build(entries, idx_path, dat_path,
+                                encoding=C.ENC_UTF8, direction=C.DIR_CE,
+                                source_tag=source_tag,
+                                common_idx_path=common_idx_path,
+                                common_max=common_max)
+    if common_idx_path:
+        stats["common_entries"] = common_n
     stats["entries"] = n
     stats["dat_bytes"] = size
     return stats

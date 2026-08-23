@@ -86,12 +86,17 @@ def rank_ec(row):
     return 0xFFFF
 
 
-def build(src, idx_path, dat_path, source_tag="ECDICT", min_rank=None):
+def build(src, idx_path, dat_path, source_tag="ECDICT", min_rank=None,
+          common_idx_path=None, common_max=20000):
     stats = {}
     entries = list(parse(src, stats, min_rank=min_rank))
-    n, size = C.build(entries, idx_path, dat_path,
-                      encoding=C.ENC_ASCII_LOWER, direction=C.DIR_EC,
-                      source_tag=source_tag)
+    n, size, common_n = C.build(entries, idx_path, dat_path,
+                                encoding=C.ENC_ASCII_LOWER, direction=C.DIR_EC,
+                                source_tag=source_tag,
+                                common_idx_path=common_idx_path,
+                                common_max=common_max)
     stats["entries"] = n
     stats["dat_bytes"] = size
+    if common_idx_path:
+        stats["common_entries"] = common_n
     return stats

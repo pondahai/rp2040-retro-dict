@@ -184,10 +184,62 @@ def test_forward_compat():
     check(r.fields[0x7F] == b"future field", "未知 tag 被保留而非報錯")
 
 
+def test_common_index():
+    print("常用詞索引與 A/B 兩種模式（FORMAT.md §8）")
+    # 重現真實資料的形狀：一個常用詞，前面擋著一大票同前綴的罕見詞
+    entries = [C.Entry(key=b"hello", fields=[(C.T_HEADWORD, b"hello")], rank=2238)]
+    entries += [C.Entry(key=("hel%04d" % i).encode(),
+                        fields=[(C.T_HEADWORD, b"x")], rank=0xFFFF)
+                for i in range(600)]
+    with tempfile.TemporaryDirectory() as d:
+        idx = os.path.join(d, "T.IDX")
+        dat = os.path.join(d, "T.DAT")
+        com = os.path.join(d, "TC.IDX")
+        n, size, cn = C.build(entries, idx, dat, encoding=C.ENC_ASCII_LOWER,
+                              direction=C.DIR_EC, common_idx_path=com,
+                              common_max=100)
+        check(cn == 1, "只有 rank 有效的詞進常用詞索引（0xFFFF 不算）")
+        check(os.path.getsize(com) == C.SECTOR + cn * C.REC_SIZE,
+              "常用詞索引與主索引同格式")
+
+        dd = C.Dictionary(idx, dat, com)
+        b = [k for k, _o, _l, _r in dd.prefix(b"hel", 5, common_first=True)]
+        check(b and b[0] == b"hello", "模式 B：常用詞排第一（真實資料上 hel -> hello）")
+        a = [k for k, _o, _l, _r in dd.prefix(b"hel", 5, common_first=False)]
+        check(b"hello" not in a[:1], "模式 A：純字母序，常用詞不會被拉前")
+        check(len(a) == 5 and len(b) == 5, "兩種模式都填滿 limit")
+        check(len(set(b)) == len(b), "模式 B 不會重複列出同一個詞")
+        dd.close()
+
+        # 沒掛常用詞索引時，common_first 不該爆炸
+        dd = C.Dictionary(idx, dat)
+        got = dd.prefix(b"hel", 5, common_first=True)
+        check(len(got) == 5, "沒有常用詞索引時 common_first 靜默退回模式 A")
+        dd.close()
+
+
+def test_common_index_mismatch():
+    print("常用詞索引的錯配偵測")
+    with tempfile.TemporaryDirectory() as d:
+        idx, dat = os.path.join(d, "T.IDX"), os.path.join(d, "T.DAT")
+        com = os.path.join(d, "TC.IDX")
+        C.build([C.Entry(key=b"a", fields=[(C.T_HEADWORD, b"a")], rank=1)],
+                idx, dat, encoding=C.ENC_ASCII_LOWER, direction=C.DIR_EC,
+                common_idx_path=com)
+        with open(dat, "ab") as f:
+            f.write(b"\0" * 4)
+        try:
+            C.Dictionary(idx, dat, com)
+            check(False, "常用詞索引過期應該報錯")
+        except C.FormatError:
+            check(True, "常用詞索引與 DAT 不同步會報錯（重轉檔時容易只更新一個）")
+
+
 if __name__ == "__main__":
     for t in (test_normalize, test_syllables, test_container_roundtrip,
               test_truncated_keys, test_prefix, test_builders,
-              test_mismatch_detection, test_forward_compat):
+              test_mismatch_detection, test_forward_compat,
+              test_common_index, test_common_index_mismatch):
         t()
     print()
     if FAILED:

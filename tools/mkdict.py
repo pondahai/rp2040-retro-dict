@@ -36,12 +36,17 @@ def cmd_build(kind, src, outdir):
     name = "EC" if kind == "ec" else "CE"
     idx = os.path.join(outdir, name + ".IDX")
     dat = os.path.join(outdir, name + ".DAT")
+    # 常用詞索引（FORMAT.md §8）只對英漢有意義：ECDICT 附真實詞頻，
+    # CC-CEDICT 沒有。中文那邊硬做只是把長度啟發式包裝成「常用度」，
+    # 實測會把「你个头」排在「你好」前面 —— 寧可不做。
+    common = os.path.join(outdir, name + "C.IDX") if kind == "ec" else None
     t0 = time.time()
     mod = build_ec if kind == "ec" else build_ce
-    stats = mod.build(src, idx, dat)
-    print("%s: %d 筆，索引 %d bytes，內文 %d bytes，耗時 %.1fs"
-          % (name, stats["entries"],
-             os.path.getsize(idx), stats["dat_bytes"], time.time() - t0))
+    stats = mod.build(src, idx, dat, common_idx_path=common)
+    extra = "，常用詞索引 %d bytes" % os.path.getsize(common) if common else ""
+    print("%s: %d 筆，索引 %d bytes%s，內文 %d bytes，耗時 %.1fs"
+          % (name, stats["entries"], os.path.getsize(idx), extra,
+             stats["dat_bytes"], time.time() - t0))
     _report(stats)
 
 
@@ -54,12 +59,22 @@ def cmd_check(outdir):
         if not os.path.exists(idx):
             print("%s: 缺檔，跳過" % name)
             continue
-        d = C.Dictionary(idx, dat)
-        print("%s: %d 筆 source=%s" % (name, d.hdr.rec_count, d.hdr.source_tag))
+        common = os.path.join(outdir, name + "C.IDX")
+        d = C.Dictionary(idx, dat, common if os.path.exists(common) else None)
+        print("%s: %d 筆（常用詞 %s）source=%s"
+              % (name, d.hdr.rec_count,
+                 d.common.hdr.rec_count if d.common else "無", d.hdr.source_tag))
         d.src.reads = 0
         hits = d.lookup(norm(probe))
         print("   查 %-6s 命中 %d 筆，SD 讀取 %d 次"
               % (probe, len(hits), d.src.reads))
+        # FORMAT.md §8 的兩種模式並排，方便直接看差別
+        pre = norm(probe)[:3]
+        for label, cf in (("B 常用詞優先", True), ("A 純字母序", False)):
+            got = d.prefix(pre, 6, common_first=cf)
+            shown = [k.decode("utf-8", "replace") for k, _o, _l, _r in got]
+            print("   前綴 %-8s %-14s %s"
+                  % (pre.decode("utf-8", "replace"), label, " ".join(shown)))
         d.close()
 
 

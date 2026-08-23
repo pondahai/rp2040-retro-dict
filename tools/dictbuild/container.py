@@ -69,12 +69,31 @@ def encode_record(e):
     return struct.pack("<H", total) + bytes(body)
 
 
+def _write_index(path, records, encoding, direction, dat_size,
+                 source_tag, build_epoch):
+    header = bytearray(SECTOR)
+    header[0:8] = MAGIC
+    struct.pack_into("<HHIBBHII", header, 8,
+                     FORMAT_VERSION, REC_SIZE, len(records),
+                     encoding, direction, 0, dat_size, build_epoch)
+    header[0x1C:0x1C + 32] = source_tag.encode("ascii")[:32].ljust(32, b"\0")
+    with open(path, "wb") as f:
+        f.write(header)
+        for key24, off, ln, rank in records:
+            f.write(key24 + struct.pack("<IHH", off, ln, rank))
+
+
 def build(entries, idx_path, dat_path, encoding, direction,
-          source_tag="", build_epoch=0):
+          source_tag="", build_epoch=0,
+          common_idx_path=None, common_max=20000):
     """把 entries 寫成一組 .IDX/.DAT。
 
     entries 會被完整排序後再寫，因此需要一次放進記憶體。76 萬筆的索引項是
     ~24MB，PC 上無所謂；.DAT 的內文則是邊排邊寫、不整批留存。
+
+    common_idx_path 會**額外**再寫一份「常用詞索引」（FORMAT.md §8）：
+    取 rank 最好的 common_max 筆，一樣按鍵排序。它指向的是**同一個 .DAT**，
+    所以只多花索引的空間（2 萬筆 = 640KB），內文一個 byte 都不重複。
     """
     entries = sorted(entries, key=lambda e: e.key[:KEY24].ljust(KEY24, b"\0"))
     index = []
@@ -87,18 +106,18 @@ def build(entries, idx_path, dat_path, encoding, direction,
             off += len(blob)
         dat_size = off
 
-    header = bytearray(SECTOR)
-    header[0:8] = MAGIC
-    struct.pack_into("<HHIBBHII", header, 8,
-                     FORMAT_VERSION, REC_SIZE, len(index),
-                     encoding, direction, 0, dat_size, build_epoch)
-    header[0x1C:0x1C + 32] = source_tag.encode("ascii")[:32].ljust(32, b"\0")
+    _write_index(idx_path, index, encoding, direction, dat_size,
+                 source_tag, build_epoch)
 
-    with open(idx_path, "wb") as idx:
-        idx.write(header)
-        for key24, off, ln, rank in index:
-            idx.write(key24 + struct.pack("<IHH", off, ln, rank))
-    return len(index), dat_size
+    common_n = 0
+    if common_idx_path:
+        ranked = [r for r in index if r[3] < 0xFFFF]
+        ranked.sort(key=lambda r: (r[3], r[0]))
+        common = sorted(ranked[:common_max], key=lambda r: r[0])
+        _write_index(common_idx_path, common, encoding, direction, dat_size,
+                     source_tag, build_epoch)
+        common_n = len(common)
+    return len(index), dat_size, common_n
 
 
 # --------------------------------------------------------------------------
@@ -183,20 +202,19 @@ def _decode_record(blob):
     return Result(key, 0, fields)
 
 
-class Dictionary:
-    def __init__(self, idx_path, dat_path):
-        self.src = SectorSource(idx_path)
+class IndexView:
+    """一個 `.IDX` 檔的搜尋邏輯。
+
+    主索引與常用詞索引（FORMAT.md §8）用的是**完全相同**的檔案格式，
+    所以共用這一個類別 —— 韌體端也應該只寫一份，開兩個實例。
+    """
+
+    def __init__(self, path):
+        self.src = SectorSource(path)
         self.hdr = parse_header(self.src.sector(0))
-        self._dat = open(dat_path, "rb")
-        actual = os.path.getsize(dat_path)
-        if actual != self.hdr.dat_size:
-            raise FormatError(
-                "IDX 與 DAT 不配對: 檔頭記 %d bytes, 實際 %d bytes"
-                % (self.hdr.dat_size, actual))
 
     def close(self):
         self.src.close()
-        self._dat.close()
 
     @property
     def last_sector(self):
@@ -237,23 +255,80 @@ class Dictionary:
         # 這個扇區全部小於 probe，答案是下一個扇區的第一筆
         return min((lo + 1) * RECS_PER_SECTOR, self.hdr.rec_count)
 
-    def _read_index(self, i):
+    def read(self, i):
         if i >= self.hdr.rec_count:
             return None
         s, j = divmod(i, RECS_PER_SECTOR)
         return self._rec_in(self.src.sector(s + 1), j)
+
+    def scan_prefix(self, key, window):
+        """從 lower_bound 起往後掃最多 window 筆前綴相符的索引記錄。"""
+        i = self.lower_bound(key)
+        pre = key[:KEY24]
+        out = []
+        while len(out) < window and i < self.hdr.rec_count:
+            key24, off, ln, rank = self.read(i)
+            if not key24.startswith(pre):
+                break
+            out.append((key24.rstrip(b"\0"), off, ln, rank))
+            i += 1
+        return out
+
+
+class Dictionary:
+    """一個查詢方向。可選地掛上常用詞索引（FORMAT.md §8）。
+
+    common_idx 指向的是**同一個 .DAT**，所以掛不掛都不影響內文讀取；
+    差別只在 prefix() 的候選來源。這就是為什麼「常用詞優先」可以做成
+    純執行期的開關 —— 見 §8 的 A/B。
+    """
+
+    def __init__(self, idx_path, dat_path, common_idx_path=None):
+        self.main = IndexView(idx_path)
+        self.common = IndexView(common_idx_path) if common_idx_path else None
+        self._dat = open(dat_path, "rb")
+        actual = os.path.getsize(dat_path)
+        for view, what in ((self.main, "IDX"), (self.common, "常用詞 IDX")):
+            if view is not None and view.hdr.dat_size != actual:
+                raise FormatError(
+                    "%s 與 DAT 不配對: 檔頭記 %d bytes, 實際 %d bytes"
+                    % (what, view.hdr.dat_size, actual))
+
+    def close(self):
+        self.main.close()
+        if self.common:
+            self.common.close()
+        self._dat.close()
+
+    # 舊介面：測試與既有呼叫端仍直接用 hdr / src / lower_bound
+    @property
+    def hdr(self):
+        return self.main.hdr
+
+    @property
+    def src(self):
+        return self.main.src
+
+    def lower_bound(self, key):
+        return self.main.lower_bound(key)
+
+    def _read_index(self, i):
+        return self.main.read(i)
 
     def _read_dat(self, off, ln):
         self._dat.seek(off)
         return _decode_record(self._dat.read(ln))
 
     def lookup(self, key):
-        """精確查詢。key 必須已正規化。回傳 Result 串列（同鍵可能多筆）。"""
+        """精確查詢。key 必須已正規化。回傳 Result 串列（同鍵可能多筆）。
+
+        只查主索引 —— 常用詞索引是主索引的子集，查它不會多找到任何東西。
+        """
         probe = key[:KEY24].ljust(KEY24, b"\0")
-        i = self.lower_bound(key)
+        i = self.main.lower_bound(key)
         hits = []
         for n in range(MAX_SCAN):
-            rec = self._read_index(i + n)
+            rec = self.main.read(i + n)
             if rec is None or rec[0] != probe:
                 break
             r = self._read_dat(rec[1], rec[2])
@@ -262,26 +337,43 @@ class Dictionary:
                 hits.append(r)
         return hits
 
-    def prefix(self, key, limit=16, window=128):
+    def prefix(self, key, limit=16, window=128, common_first=True):
         """前綴候選。只讀索引不讀 .DAT —— rank 就在索引裡（§5）。
 
-        window 是關鍵：索引是**按鍵排序**的，常用詞不見得排在前面。真實資料上
-        打 `ap` 時，鍵序的前 16 筆全是 ap- 開頭的化學品編號，`apple` 排在
-        幾百筆之後。所以要掃一個較大的窗口再依 rank 取前 limit 筆。
+        common_first 就是 FORMAT.md §8 的 A/B 開關，可以在執行期切換：
 
-        window=128 表示最多 8 個扇區（128/16），對 SD 是可接受的成本；
-        調小會讓常用詞消失，調大只是多幾次讀取。
+          True  (B) 先從常用詞索引取，不足再用主索引的字母序補滿。
+                    打 `hel` 第一個是 `hello`。
+          False (A) 純字母序，就是 1980 年代電子字典的行為。
+                    打 `hel` 得到 `helen / helena / held`。
+
+        沒有掛常用詞索引時，common_first 無效果，行為等同 A。
+
+        window 只約束主索引那一段的掃描量：索引按鍵排序，常用詞不見得排在
+        前面，掃太少會漏、掃太多只是多幾次 SD 讀取。128 筆 = 8 個扇區。
         """
-        i = self.lower_bound(key)
-        pre = key[:KEY24]
         out = []
-        scanned = 0
-        while scanned < window and i < self.hdr.rec_count:
-            key24, off, ln, rank = self._read_index(i)
-            if not key24.startswith(pre):
-                break
-            out.append((key24.rstrip(b"\0"), off, ln, rank))
-            i += 1
-            scanned += 1
-        out.sort(key=lambda t: (t[3], len(t[0]), t[0]))
+        seen = set()
+        if common_first and self.common is not None:
+            # 這裡也要掃窗口再排序，不能只取前 limit 筆 —— 常用詞索引一樣是
+            # 按鍵排序的，只是 haystack 小很多。只取 limit 筆的話 `hel` 會
+            # 得到 hell/helen/helicopter 而漏掉 hello，錯誤性質跟主索引相同。
+            cand = self.common.scan_prefix(key, window)
+            cand.sort(key=lambda t: (t[3], len(t[0]), t[0]))
+            for rec in cand[:limit]:
+                if rec[0] not in seen:
+                    seen.add(rec[0])
+                    out.append(rec)
+        if len(out) < limit:
+            rest = []
+            for r in self.main.scan_prefix(key, window):
+                if r[0] in seen:
+                    continue
+                seen.add(r[0])   # 同一個詞頭可能有多筆（多音字、多詞性），
+                rest.append(r)   # 候選清單只該出現一次
+            if not out:
+                # 純字母序模式（A），或常用詞索引沒命中：依 rank 挑，
+                # 讓至少不會被 ap-237 這種編號佔滿整個畫面
+                rest.sort(key=lambda t: (t[3], len(t[0]), t[0]))
+            out.extend(rest[:limit - len(out)])
         return out[:limit]
