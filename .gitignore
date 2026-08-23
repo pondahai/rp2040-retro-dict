@@ -26,3 +26,4 @@ firmware/*.o
 firmware/*.obj
 loader_offset/memmap_app_arduino.ld
 out/
+out/font/
