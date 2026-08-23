@@ -94,7 +94,26 @@ def wrap(font, text, max_w):
     return lines
 
 
-def render_result(font, word):
+def body_lines(font, fields):
+    """內文攤成一串行：中文釋義在前、英文釋義在後，中間空 4 px。
+
+    兩段合成同一串是為了捲動 —— 捲到一半停在中英交界，兩段各自記位置會
+    非常難算，攤平之後捲動就只是一個整數。韌體端 `ui.c` 的 scan_body()
+    做同一件事。
+    """
+    out = []
+    for para in fields.get(C.T_TRANS_ZH, "").split("\n"):
+        for line in wrap(font, para, W - 6):
+            out.append((line, RAMP, 0))
+    gap = 4
+    for para in fields.get(C.T_DEF_EN, "").split("\n"):
+        for line in wrap(font, para, W - 6):
+            out.append((line, DIM_RAMP, gap))
+            gap = 0
+    return out
+
+
+def render_result(font, word, scroll=0):
     fields, _cands = fetch(word)
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
@@ -106,17 +125,12 @@ def render_result(font, word):
         draw_text(img, font, x + 10, 1, "[" + ipa + "]", BAR_RAMP)
 
     y = LINE_H + 3
-    for para in fields.get(C.T_TRANS_ZH, "").split("\n"):
-        for line in wrap(font, para, W - 6):
-            draw_text(img, font, 3, y, line, RAMP)
-            y += LINE_H
-    y += 4
-    for para in fields.get(C.T_DEF_EN, "").split("\n"):
-        for line in wrap(font, para, W - 6):
-            if y > H - LINE_H * 2:
-                break
-            draw_text(img, font, 3, y, line, DIM_RAMP)
-            y += LINE_H
+    for line, ramp, gap in body_lines(font, fields)[scroll:]:
+        y += gap
+        if y > H - LINE_H * 2:
+            break
+        draw_text(img, font, 3, y, line, ramp)
+        y += LINE_H
 
     d.rectangle([0, H - LINE_H, W - 1, H - 1], fill=BAR)
     draw_text(img, font, 3, H - LINE_H + 1, "英漢  F1 發音  F2 切換  F3 放大",
@@ -124,7 +138,7 @@ def render_result(font, word):
     return img
 
 
-def render_typing(font, typed):
+def render_typing(font, typed, sel=0):
     """邊打邊查：輸入框 + 常用詞優先的候選清單（FORMAT.md §8 模式 B）。"""
     _f, cands = fetch("apple")
     d0 = C.Dictionary(os.path.join(DICT_DIR, "EC.IDX"),
@@ -146,7 +160,7 @@ def render_typing(font, typed):
     for i, (word, trans) in enumerate(rows):
         if y > H - LINE_H * 2:
             break
-        if i == 0:
+        if i == sel:
             d.rectangle([0, y - 1, W - 1, y + LINE_H - 2], fill=(16, 40, 16))
         x = draw_text(img, font, 3, y, word, RAMP)
         if trans:

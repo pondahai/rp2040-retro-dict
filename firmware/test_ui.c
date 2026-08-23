@@ -4,8 +4,11 @@
  * 只有最後一步「像素往哪去」換成寫 PPM。firmware/compare_ui.py 拿這張圖
  * 跟 tools/ui_preview.py 的 PIL 版本逐像素比對。
  *
- *   test_ui <DICT目錄> result <詞> <輸出.ppm>
- *   test_ui <DICT目錄> typing <已打的字> <輸出.ppm>
+ *   test_ui <DICT目錄> result <詞> <輸出.ppm> [捲動行數]
+ *   test_ui <DICT目錄> typing <已打的字> <輸出.ppm> [反白第幾列]
+ *
+ * 畫面走的是板子上同一塊 4bpp 調色盤畫布（fbuf.c），所以連打包／展開
+ * 都被這條比對線驗證，不只是排版。
  */
 
 #include <stdio.h>
@@ -13,6 +16,7 @@
 #include <string.h>
 
 #include "dict.h"
+#include "fbuf.h"
 #include "font.h"
 #include "ui.h"
 
@@ -59,33 +63,24 @@ static FILE *open_or_die(const char *dir, const char *name)
 
 /* ---- 畫布 ---- */
 
-static uint8_t FB[UI_H][UI_W][3];
-
-static void fb_pixel(void *ctx, int x, int y, uint32_t c)
-{
-    (void)ctx;
-    if (x < 0 || y < 0 || x >= UI_W || y >= UI_H)
-        return;
-    FB[y][x][0] = (uint8_t)(c >> 16);
-    FB[y][x][1] = (uint8_t)(c >> 8);
-    FB[y][x][2] = (uint8_t)c;
-}
-
-static void fb_fill(void *ctx, int x, int y, int w, int h, uint32_t c)
-{
-    int i, j;
-    for (j = y; j < y + h; j++)
-        for (i = x; i < x + w; i++)
-            fb_pixel(ctx, i, j, c);
-}
+static fbuf FB;
 
 static int write_ppm(const char *path)
 {
     FILE *f = fopen(path, "wb");
+    int x, y;
     if (!f)
         return -1;
     fprintf(f, "P6\n%d %d\n255\n", UI_W, UI_H);
-    fwrite(FB, 1, sizeof(FB), f);
+    for (y = 0; y < UI_H; y++)
+        for (x = 0; x < UI_W; x++) {
+            uint32_t c = fbuf_get(&FB, x, y);
+            uint8_t rgb[3];
+            rgb[0] = (uint8_t)(c >> 16);
+            rgb[1] = (uint8_t)(c >> 8);
+            rgb[2] = (uint8_t)c;
+            fwrite(rgb, 1, 3, f);
+        }
     fclose(f);
     return 0;
 }
@@ -115,13 +110,15 @@ int main(int argc, char **argv)
     font fnt;
     ui_target t;
     uint8_t blob[8192];
-    int rc;
+    int rc, extra = 0;
 
     if (argc < 5) {
         fprintf(stderr, "用法：test_ui <DICT目錄> result|typing <字> <out.ppm>\n");
         return 1;
     }
     dir = argv[1]; mode = argv[2]; arg = argv[3]; out = argv[4];
+    if (argc > 5)
+        extra = atoi(argv[5]);
 
     fidx = open_or_die(dir, "EC.IDX");
     fdat = open_or_die(dir, "EC.DAT");
@@ -144,9 +141,8 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    t.ctx = NULL;
-    t.fill = fb_fill;
-    t.pixel = fb_pixel;
+    fbuf_init(&FB);
+    fbuf_target(&FB, &t);
 
     if (strcmp(mode, "result") == 0) {
         uint8_t key[DICT_MAX_KEY];
@@ -165,7 +161,7 @@ int main(int argc, char **argv)
         e.phonetic = field(&rec, DICT_T_PHONETIC, ph, sizeof(ph));
         e.trans_zh = field(&rec, DICT_T_TRANS_ZH, zh, sizeof(zh));
         e.def_en   = field(&rec, DICT_T_DEF_EN, en, sizeof(en));
-        ui_render_result(&t, &fnt, &e);
+        ui_render_result(&t, &fnt, &e, extra);
     } else if (strcmp(mode, "typing") == 0) {
         dict_entry hits[8];
         ui_cand rows[8];
@@ -201,7 +197,7 @@ int main(int argc, char **argv)
                 }
             }
         }
-        ui_render_typing(&t, &fnt, arg, rows, n);
+        ui_render_typing(&t, &fnt, arg, rows, n, extra);
     } else {
         fprintf(stderr, "不認得的模式 %s\n", mode);
         return 1;
@@ -211,6 +207,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "寫不了 %s\n", out);
         return 2;
     }
-    printf("%s\t%s\tfont_reads=%u\n", mode, out, (unsigned)fnt.reads);
+    printf("%s\t%s\tfont_reads=%u\tcolors=%u%s\n", mode, out,
+           (unsigned)fnt.reads, (unsigned)FB.pal_n,
+           FB.overflow ? "\tPALETTE-OVERFLOW" : "");
     return 0;
 }

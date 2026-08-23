@@ -73,51 +73,114 @@ int ui_wrap_next(font *f, const char *utf8, int max_w)
     return used;
 }
 
-/* 把一段文字（可能含 '\n'）畫成多行。y 用傳參更新。
- * limit_y >= 0 時，畫到超過就停 —— 英文釋義那一區會用到。 */
-static void draw_para(const ui_target *t, font *f, const char *s, int *y,
-                      const uint32_t ramp[4], int limit_y)
-{
-    char line[512];
+/* 內文是一串「行」：中文釋義在前、英文釋義在後，中間空 4 px。
+ *
+ * 兩段合成同一串而不是各畫各的，是因為捲動要能跨過那個分界 —— 捲到一半
+ * 停在中英交界，兩段各自記位置會非常難算。這裡改成掃過去、跳過前 scroll
+ * 行、畫到底為止，捲動就只是一個整數。
+ *
+ * emit 回 0 表示畫不下了，掃描可以提早停。
+ */
+typedef int (*line_fn)(void *ctx, const char *line, int len,
+                       const uint32_t ramp[4], int gap);
 
-    if (!s)
-        return;
-    while (*s) {
-        const char *nl = strchr(s, '\n');
-        const char *end = nl ? nl : s + strlen(s);
-        while (s < end) {
-            int n;
-            char save;
-            /* 每段獨立斷行：先把段落尾端當成字串結尾 */
-            int avail = (int)(end - s);
-            int take = avail < (int)sizeof(line) - 1 ? avail : (int)sizeof(line) - 1;
-            /* 截斷要停在字元邊界上，否則會把一個 UTF-8 序列切一半，
-               斷行寬度就跟著錯（Python 那邊是逐字元處理，沒有這個坑）。 */
-            while (take < avail && (utf8_cont(s[take])))
-                take--;
-            memcpy(line, s, (size_t)take);
-            line[take] = 0;
-            n = ui_wrap_next(f, line, UI_W - 6);
-            if (n <= 0)
+static int scan_body(font *f, const ui_entry *e, line_fn emit, void *ctx)
+{
+    const char *blocks[2];
+    const uint32_t *ramps[2];
+    int gap_before[2];
+    int b, count = 0;
+
+    blocks[0] = e->trans_zh; ramps[0] = UI_RAMP;     gap_before[0] = 0;
+    blocks[1] = e->def_en;   ramps[1] = UI_DIM_RAMP; gap_before[1] = 4;
+
+    for (b = 0; b < 2; b++) {
+        const char *s = blocks[b];
+        int gap = gap_before[b];
+        if (!s)
+            continue;
+        while (*s) {
+            const char *nl = strchr(s, '\n');
+            const char *end = nl ? nl : s + strlen(s);
+            while (s < end) {
+                char line[512];
+                int avail = (int)(end - s);
+                int take = avail < (int)sizeof(line) - 1
+                           ? avail : (int)sizeof(line) - 1;
+                int n;
+                /* 截斷要停在字元邊界上，否則會把一個 UTF-8 序列切一半，
+                   斷行寬度就跟著錯（Python 那邊是逐字元處理，沒有這個坑）。 */
+                while (take < avail && utf8_cont(s[take]))
+                    take--;
+                memcpy(line, s, (size_t)take);
+                line[take] = 0;
+                n = ui_wrap_next(f, line, UI_W - 6);
+                if (n <= 0)
+                    break;
+                count++;
+                if (emit && !emit(ctx, s, n, ramps[b], gap))
+                    return count;
+                gap = 0;
+                s += n;
+            }
+            if (!nl)
                 break;
-            save = line[n];
-            line[n] = 0;
-            if (limit_y >= 0 && *y > limit_y)
-                return;
-            ui_draw_text(t, f, 3, *y, line, ramp);
-            line[n] = save;
-            *y += UI_LINE_H;
-            s += n;
+            s = nl + 1;
         }
-        if (!nl)
-            break;
-        s = nl + 1;
     }
+    return count;
 }
 
-void ui_render_result(const ui_target *t, font *f, const ui_entry *e)
+int ui_body_lines(font *f, const ui_entry *e)
 {
-    int x, y;
+    return scan_body(f, e, NULL, NULL);
+}
+
+int ui_body_rows(void)
+{
+    /* 內文從 LINE_H+3 開始，畫到剩兩列高就停（最下面那條是狀態列）。 */
+    return (UI_H - UI_LINE_H * 2 - (UI_LINE_H + 3)) / UI_LINE_H + 1;
+}
+
+int ui_cand_rows(void)
+{
+    return (UI_H - UI_LINE_H * 2 - (UI_LINE_H + 3)) / UI_LINE_H + 1;
+}
+
+typedef struct {
+    const ui_target *t;
+    font *f;
+    int y;
+    int skip;
+} body_ctx;
+
+static int body_emit(void *ctx, const char *line, int len,
+                     const uint32_t ramp[4], int gap)
+{
+    body_ctx *b = (body_ctx *)ctx;
+    char buf[512];
+
+    if (b->skip > 0) {
+        b->skip--;
+        return 1;
+    }
+    b->y += gap;
+    if (b->y > UI_H - UI_LINE_H * 2)
+        return 0;
+    if (len > (int)sizeof(buf) - 1)
+        len = (int)sizeof(buf) - 1;
+    memcpy(buf, line, (size_t)len);
+    buf[len] = 0;
+    ui_draw_text(b->t, b->f, 3, b->y, buf, ramp);
+    b->y += UI_LINE_H;
+    return 1;
+}
+
+void ui_render_result(const ui_target *t, font *f, const ui_entry *e,
+                      int scroll)
+{
+    body_ctx b;
+    int x;
 
     t->fill(t->ctx, 0, 0, UI_W, UI_H, UI_BG);
     t->fill(t->ctx, 0, 0, UI_W, UI_LINE_H, UI_BAR);
@@ -129,10 +192,11 @@ void ui_render_result(const ui_target *t, font *f, const ui_entry *e)
         ui_draw_text(t, f, x, 1, "]", UI_BAR_RAMP);
     }
 
-    y = UI_LINE_H + 3;
-    draw_para(t, f, e->trans_zh, &y, UI_RAMP, -1);
-    y += 4;
-    draw_para(t, f, e->def_en, &y, UI_DIM_RAMP, UI_H - UI_LINE_H * 2);
+    b.t = t;
+    b.f = f;
+    b.y = UI_LINE_H + 3;
+    b.skip = scroll;
+    scan_body(f, e, body_emit, &b);
 
     t->fill(t->ctx, 0, UI_H - UI_LINE_H, UI_W, UI_LINE_H, UI_BAR);
     ui_draw_text(t, f, 3, UI_H - UI_LINE_H + 1,
@@ -142,7 +206,7 @@ void ui_render_result(const ui_target *t, font *f, const ui_entry *e)
 }
 
 void ui_render_typing(const ui_target *t, font *f, const char *typed,
-                      const ui_cand *rows, int n)
+                      const ui_cand *rows, int n, int sel)
 {
     int i, x, y;
 
@@ -157,7 +221,7 @@ void ui_render_typing(const ui_target *t, font *f, const char *typed,
     for (i = 0; i < n; i++) {
         if (y > UI_H - UI_LINE_H * 2)
             break;
-        if (i == 0)
+        if (i == sel)
             t->fill(t->ctx, 0, y - 1, UI_W, UI_LINE_H, SEL_BG);
         x = ui_draw_text(t, f, 3, y, rows[i].word, UI_RAMP);
         if (rows[i].trans && rows[i].trans[0]) {

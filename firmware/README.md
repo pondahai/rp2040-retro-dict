@@ -171,3 +171,52 @@ python firmware/compare_ui.py
 
 窄表要**先於**寬表查（`font_get`），順序反了會讓全形／半形重疊的碼位拿到錯
 的那個 —— 這跟 `mkfont.py` 的 `Font.glyph()` 是同一個順序。
+
+---
+
+## 鍵盤與狀態機
+
+```
+firmware/build_app.bat
+firmware/test_app.exe ../out/DICT keys
+python tools/ui_session.py "app[SNAP][DOWN][SNAP][ENTER][SNAP]"
+```
+
+`keys.c` 把 8x8 矩陣的掃描結果變成按鍵事件（去彈跳、修飾鍵、連發、
+FN+數字 = F1~F10），`app.c` 是兩個畫面的狀態機（邊打邊查／詞條內文），
+兩者都是純 C、都不碰 GPIO。板子上的 `loop()` 只有三行：掃矩陣、餵事件、
+髒了就重畫。
+
+**測試不是直接餵事件的。** `test_app.c` 把腳本裡的每一顆鍵反查成矩陣座標，
+組成 74HC165 會讀回來的那 8 個 byte，再逐個 5ms 時間刻度餵進 `keys.c`。
+直接呼叫 `app_key()` 會讓去彈跳與修飾鍵那一段完全沒被跑到 —— 那正是
+HANDOVER 講的那種假通過。`[F1]` 也是真的按住 FN 再按 1。
+
+對照表用 **KeyboardTester README 的實測真值表**，不是 `PicoApple2.ino` 的
+`keymap_base`。`test_app.exe ... keys` 會檢查 64 格一對一填滿、修飾鍵恰好
+5 顆、字母的 base/shift 成對 —— 表是機械轉出來的，轉錯了不會有任何症狀，
+直到有人按下那顆鍵。
+
+## 4bpp 畫布
+
+`fbuf.c`。RGB565 全畫面要 150 KB，RP2040 只有 264 KB；但整個 UI 只用到
+12 種顏色，存成 4 bit 索引只要 **37.5 KB**，送螢幕時逐列展開成 RGB565。
+省下的 112 KB 比任何一種分區重繪都划算，而且 `ui.c` 只要畫一次。
+
+`compare_ui.py` 的逐像素比對就是走這條路，所以打包／展開的正確性跟排版
+一起被驗證。調色盤滿了會設 `overflow` 旗標而不是靜靜畫錯。
+
+## 板子端（RetroDict/）
+
+`RetroDict.ino` 是唯一碰硬體的檔案：ILI9341 初始化序列與鍵盤掃描時序
+都自 PicoApple2 / KeyboardTester 原封搬移，SD 用 arduino-pico 的 `SD` 函式庫
+接上 `dict_read_fn`。
+
+`RetroDict/src/rd_*.c` 只是一行 `#include <dict.c>` —— **正本永遠是
+`firmware/`**。Arduino 會把整個 sketch 目錄複製到 build 目錄再編譯，相對
+路徑跳不出去，所以 `build_uf2.bat` 用 `-I` 把 `firmware/` 指進去，角括號
+才不會 include 到自己。複製一份原始碼會立刻走樣，這個轉接檔就是為了不要
+有第二份。
+
+實測 flash 125,524 B（5%）、靜態 RAM 63,312 B（24%，含 37.5 KB 畫布與
+SD 函式庫）。

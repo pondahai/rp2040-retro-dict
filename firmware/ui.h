@@ -47,7 +47,12 @@ typedef struct {
     const char *def_en;
 } ui_entry;
 
-void ui_render_result(const ui_target *t, font *f, const ui_entry *e);
+/* scroll = 從內文的第幾行開始畫（0 = 頂）。長詞條靠它捲動。 */
+void ui_render_result(const ui_target *t, font *f, const ui_entry *e,
+                      int scroll);
+/* 內文一共幾行，以及一頁裝得下幾行 —— 捲動上限由呼叫端算，這一層不記狀態。 */
+int  ui_body_lines(font *f, const ui_entry *e);
+int  ui_body_rows(void);
 
 /* 邊打邊查畫面。第一列反白。 */
 typedef struct {
@@ -55,7 +60,10 @@ typedef struct {
     const char *trans;      /* 只畫第一行 */
 } ui_cand;
 
+/* sel = 反白哪一列（-1 = 都不反白）。 */
 void ui_render_typing(const ui_target *t, font *f, const char *typed,
-                      const ui_cand *rows, int n);
+                      const ui_cand *rows, int n, int sel);
+/* 候選清單最多畫得下幾列。 */
+int  ui_cand_rows(void);
 
 #endif /* UI_H_INCLUDED */

@@ -28,14 +28,20 @@ DICT_DIR = os.path.join(ROOT, "out", "DICT")
 OUT = os.path.join(ROOT, "out", "font")
 
 # 詞條畫面：挑的不是「查得到就好」，而是各自會踩到一種排版邊界。
+# 第二個元素是捲動行數 —— 0 是頂，其餘測「捲到中英釋義交界」那個接縫。
 RESULT_WORDS = [
-    "dictionary",   # 基本款，中英混排 + 音標
-    "a",            # 極短詞，釋義極長 —— 會撞到底部截斷
-    "run",          # 釋義段落多，`\n` 分段
-    "information",  # 窄字前進寬度（m/w）差一格就會整行歪掉
-    "resume",       # 音標裡有 schwa 這類非 ASCII，走窄表的非 ASCII 分支
+    ("dictionary", 0),   # 基本款，中英混排 + 音標
+    ("a", 0),            # 極短詞，釋義極長 —— 會撞到底部截斷
+    ("run", 0),          # 釋義段落多，段落分隔
+    ("information", 0),  # 窄字前進寬度（m/w）差一格就會整行歪掉
+    ("resume", 0),       # 音標裡有 schwa 這類非 ASCII，走窄表的非 ASCII 分支
+    ("dictionary", 1),   # 捲一行
+    ("a", 3),            # 捲過中英交界那 4px 空隙
+    ("run", 2),
+    ("a", 999),          # 捲過頭：兩邊都該畫成空的內文
 ]
-TYPING_PREFIXES = ["app", "a", "hel", "z", "com"]
+# 第二個元素是反白第幾列（-1 = 都不反白）
+TYPING_PREFIXES = [("app", 0), ("a", 0), ("hel", 3), ("z", -1), ("com", 7)]
 
 
 def diff(a, b, name):
@@ -62,8 +68,8 @@ def diff(a, b, name):
     return 1
 
 
-def run_c(mode, arg, out):
-    r = subprocess.run([EXE, DICT_DIR, mode, arg, out],
+def run_c(mode, arg, out, extra=0):
+    r = subprocess.run([EXE, DICT_DIR, mode, arg, out, str(extra)],
                        capture_output=True)
     if r.returncode != 0:
         raise RuntimeError("C 端失敗：%s"
@@ -80,22 +86,22 @@ def main():
 
     fails = 0
     print("詞條畫面：")
-    for w in RESULT_WORDS:
-        ppm = os.path.join(OUT, "c_result_%s.ppm" % w)
+    for w, scroll in RESULT_WORDS:
+        name = "result_%s_%d" % (w, scroll)
+        ppm = os.path.join(OUT, "c_%s.ppm" % name)
         try:
-            run_c("result", w, ppm)
+            run_c("result", w, ppm, scroll)
         except RuntimeError as e:
-            print("  skip  %s（%s）" % (w, e))
+            print("  skip  %s（%s）" % (name, e))
             continue
-        fails += diff(P.render_result(font, w), Image.open(ppm),
-                      "result_%s" % w)
+        fails += diff(P.render_result(font, w, scroll), Image.open(ppm), name)
 
     print("邊打邊查畫面：")
-    for t in TYPING_PREFIXES:
-        ppm = os.path.join(OUT, "c_typing_%s.ppm" % t)
-        run_c("typing", t, ppm)
-        fails += diff(P.render_typing(font, t), Image.open(ppm),
-                      "typing_%s" % t)
+    for t, sel in TYPING_PREFIXES:
+        name = "typing_%s_%d" % (t, sel)
+        ppm = os.path.join(OUT, "c_%s.ppm" % name)
+        run_c("typing", t, ppm, sel)
+        fails += diff(P.render_typing(font, t, sel), Image.open(ppm), name)
 
     print()
     print("全部一致" if not fails else "%d 張畫面不同" % fails)
