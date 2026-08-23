@@ -50,7 +50,10 @@ typedef struct {
     char ime_keys[IME_MAX_KEYS + 1];   /* 還沒選字的那串按鍵 */
     int  ime_len;
     char ime_cands[512];               /* 這串注音查到的候選字 */
-    int  ime_n;                        /* 候選字有幾個 */
+    int  ime_n;                        /* **這一頁**有幾個候選字 */
+    int  ime_total;                    /* 全部有幾個（常常超過一頁） */
+    int  ime_page;                     /* 目前第幾頁，PGUP/PGDN 翻 */
+    char bar_buf[64];                  /* 狀態列要顯示頁碼，需要組字串 */
     char typed[APP_MAX_TYPED + 1];
     int  typed_len;
 

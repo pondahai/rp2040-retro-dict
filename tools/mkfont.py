@@ -66,6 +66,37 @@ ALWAYS = ([cp for cp in range(0x3105, 0x3130)] +      # ㄅ..ㄩ
           [0x3000])                                    # 全形空白
 
 
+def scan_ime_pool():
+    """注音碼表裡的候選字也要有字模。
+
+    **它們不見得出現在字典內文裡** —— 碼表收的是同音字，包含大量罕用字
+    （ㄧ 有三十幾個候選）。只掃 .DAT 的話，翻到後面幾頁就是一排空框：
+    選得到卻顯示不出來，是最難解釋的那種壞法。
+
+    直接讀產生好的 firmware/ime_tables.h（它本身也是從上游解析來的）。
+    沒有那個檔就跳過 —— 還沒跑 gen_ime_tables.py 時不該卡住字型產生。
+    """
+    import re
+    path = os.path.join(ROOT, "firmware", "ime_tables.h")
+    if not os.path.exists(path):
+        print("（沒有 firmware/ime_tables.h，跳過注音候選字）")
+        return set()
+    text = open(path, encoding="utf-8").read()
+    m = re.search(r"IME_POOL\[(\d+)\]\s*=\s*\{", text)
+    if not m:
+        return set()
+    start = text.index("{", m.start()) + 1
+    end = text.index("};", start)
+    raw = bytes(int(v, 0) for v in re.findall(r"0x[0-9A-Fa-f]+", text[start:end]))
+    got = set()
+    for ch in raw.decode("utf-8", "ignore"):
+        cp = ord(ch)
+        if is_wide(cp) or 0x20 <= cp < 0x2E80:
+            got.add(cp)
+    print("注音碼表用到的字：%d 個" % len(got))
+    return got
+
+
 def scan_needed(dict_dir):
     """掃 .DAT 找出實際用到的字，分成寬（漢字）與窄（其餘）兩組。
 
@@ -87,6 +118,8 @@ def scan_needed(dict_dir):
             elif 0x20 <= cp < 0x2E80:
                 narrow.add(cp)
     for cp in ALWAYS:
+        (wide if is_wide(cp) else narrow).add(cp)
+    for cp in scan_ime_pool():
         (wide if is_wide(cp) else narrow).add(cp)
     return sorted(wide), sorted(narrow)
 

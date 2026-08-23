@@ -318,26 +318,31 @@ static void speak_typing(app *a)
  * —— 那是正常狀態，不是錯誤。 */
 static void ime_refresh(app *a)
 {
+    char ch[8];
+
     a->ime_cands[0] = 0;
     a->ime_n = 0;
+    a->ime_total = 0;
+    a->ime_page = 0;
     if (!a->ime_len)
         return;
-    if (ime_query(a->ime_keys, a->ime_cands, (int)sizeof(a->ime_cands)) > 0) {
-        char ch[8];
-        while (a->ime_n < APP_MAX_CANDS &&
-               ime_nth(a->ime_cands, a->ime_n, ch, sizeof(ch)) > 0)
-            a->ime_n++;
-    }
+    if (ime_query(a->ime_keys, a->ime_cands, (int)sizeof(a->ime_cands)) <= 0)
+        return;
+    /* 同音字常常超過一頁 —— ㄧ 有三十幾個。全部數出來，翻頁才知道有幾頁。 */
+    while (ime_nth(a->ime_cands, a->ime_total, ch, sizeof(ch)) > 0)
+        a->ime_total++;
+    a->ime_n = a->ime_total < APP_MAX_CANDS ? a->ime_total : APP_MAX_CANDS;
 }
 
 /* 候選清單在漢英模式下有兩種內容：注音打到一半時是**候選字**，
  * 沒有待選注音時是**字典的前綴候選**。兩者共用同一組 ui_cand。 */
 static void fill_ime_cands(app *a)
 {
+    int base = a->ime_page * APP_MAX_CANDS;
     int i;
     for (i = 0; i < a->ime_n; i++) {
         char ch[8];
-        int n = ime_nth(a->ime_cands, i, ch, sizeof(ch));
+        int n = ime_nth(a->ime_cands, base + i, ch, sizeof(ch));
         if (n <= 0)
             break;
         memcpy(a->cand_word[i], ch, (size_t)n + 1);
@@ -353,10 +358,25 @@ static void fill_ime_cands(app *a)
 }
 
 /* 選定一個字：接到查詢字串後面，注音緩衝清空，再查一次字典前綴。 */
+/* 翻到第 page 頁。最後一頁可能不滿。 */
+static void ime_set_page(app *a, int page)
+{
+    int pages = (a->ime_total + APP_MAX_CANDS - 1) / APP_MAX_CANDS;
+    int left;
+
+    if (pages < 1 || page < 0 || page >= pages)
+        return;
+    a->ime_page = page;
+    left = a->ime_total - page * APP_MAX_CANDS;
+    a->ime_n = left < APP_MAX_CANDS ? left : APP_MAX_CANDS;
+    a->sel = 0;
+}
+
 static void ime_commit(app *a, int which)
 {
     char ch[8];
-    int n = ime_nth(a->ime_cands, which, ch, sizeof(ch));
+    int n = ime_nth(a->ime_cands, a->ime_page * APP_MAX_CANDS + which,
+                    ch, sizeof(ch));
 
     if (n <= 0)
         return;
@@ -418,6 +438,14 @@ static void ime_key(app *a, const key_event *ev)
             show_word(a, a->cand_word[a->sel]);
         else if (a->typed_len)
             show_word(a, a->typed);
+        break;
+    case KEY_PGDN:
+        if (a->ime_total)
+            ime_set_page(a, a->ime_page + 1);
+        break;
+    case KEY_PGUP:
+        if (a->ime_total)
+            ime_set_page(a, a->ime_page - 1);
         break;
     case KEY_F1:
         speak_typing(a);
@@ -559,6 +587,24 @@ static void toggle_dir(app *a)
     a->state = APP_TYPING;
 }
 
+/* 小整數轉字串。韌體端沒有 snprintf（有也不想為了兩個數字帶進來）。 */
+static int fmt_int(char *out, int v)
+{
+    char tmp[8];
+    int n = 0, i = 0;
+    if (v <= 0) {
+        out[0] = '0';
+        return 1;
+    }
+    while (v && n < (int)sizeof(tmp)) {
+        tmp[n++] = (char)('0' + v % 10);
+        v /= 10;
+    }
+    while (n)
+        out[i++] = tmp[--n];
+    return i;
+}
+
 const char *app_bar(const app *a)
 {
     if (a->notice)
@@ -566,8 +612,31 @@ const char *app_bar(const app *a)
     if (a->state == APP_RESULT)
         return a->dir == APP_EC ? "英漢  Fn+1 發音  Fn+2 切換"
                                 : "漢英  Fn+1 發音  Fn+2 切換";
-    if (a->dir == APP_CE)
-        return a->ime_n ? "注音   ENTER 選字" : "注音   Fn+2 切回英漢";
+    if (a->dir == APP_CE) {
+        if (!a->ime_n)
+            return "注音   Fn+2 切回英漢";
+        if (a->ime_total > APP_MAX_CANDS) {
+            /* 有幾頁要說出來 —— 不然使用者不知道還有別的字可以翻。 */
+            app *m = (app *)a;          /* 只寫自己的緩衝區 */
+            int pages = (a->ime_total + APP_MAX_CANDS - 1) / APP_MAX_CANDS;
+            int n = 0;
+            const char *pre = "注音 ";
+            while (*pre)
+                m->bar_buf[n++] = *pre++;
+            n += fmt_int(m->bar_buf + n, a->ime_page + 1);
+            m->bar_buf[n++] = '/';
+            n += fmt_int(m->bar_buf + n, pages);
+            {
+                /* 261px 以內才不會被右下角狀態格蓋掉 */
+                const char *post = "  PGDN 翻頁  ENTER 選字";
+                while (*post && n < (int)sizeof(m->bar_buf) - 1)
+                    m->bar_buf[n++] = *post++;
+            }
+            m->bar_buf[n] = 0;
+            return m->bar_buf;
+        }
+        return "注音   ENTER 選字";
+    }
     return "常用詞優先   ENTER 查詢";
 }
 
