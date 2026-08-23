@@ -32,6 +32,7 @@
 | 前景狀態機 | 完成，`firmware/app.c`，兩個畫面 |
 | 板子端 sketch | 編得過，`RetroDict/`，**未上機驗證** |
 | 偏移版編譯 | 完成，`build_offset.bat`，佈局檢查通過 |
+| 選單封面圖 | 完成，`assets/RetroDict.ino.RAW`，`tools/mkicon.py` 可重產 |
 | 發音接上 UI | F1 只有掛勾，還沒接 synth.c |
 | 中英切換 / 注音 IME | **完全沒開始** |
 
@@ -101,7 +102,8 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
 
 實測佈局：image `0x10004000..0x10024200`（131,584 bytes），
 向量表 `SP=0x20042000 Reset=0x100040e3`，載入器 `app_present()` 的條件都通過。
-合併跳板後 `RetroDict_standalone.uf2` 578 blocks。
+合併跳板後 `RetroDict_standalone.uf2` 578 blocks。封面圖
+`assets/RetroDict.ino.RAW` 也會被複製到 `build_offset/`，與 uf2 同放 SD 根目錄。
 
 ---
 
@@ -145,13 +147,9 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
    在 PC 上驗證到不能再驗證了。會壞的只剩三種樣子：畫面不亮（初始化序列
    或背光腳）、按鍵不動（矩陣時序或 `7-col` 的位元順序）、SD 讀不到
    （路徑或 spi1 接腳）。三種各自對應 `RetroDict.ino` 裡一段搬過來的程式碼
-4. **選單封面圖** —— 載入器要 `RetroDict.ino.RAW`：96x96 RGB565 big-endian、
-   無標頭、**固定 18432 bytes**（載入器只用檔案長度驗證），與 uf2 同放 SD
-   根目錄。用 `rp2040-retro-loader/tools/make_thumb.py` 從一張圖產生，
-   但**還沒有那張圖**
-5. **F1 接上 synth.c** —— 目前 `app.c` 只有掛勾（`a->speak`），
+4. **F1 接上 synth.c** —— 目前 `app.c` 只有掛勾（`a->speak`），
    還缺 PWM 輸出與把音標餵給合成器
-6. **注音 IME**：要先 clone `pico_keyboard_ime_terminal`，**本機還沒有**
+5. **注音 IME**：要先 clone `pico_keyboard_ime_terminal`，**本機還沒有**
 
 ---
 

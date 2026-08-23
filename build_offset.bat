@@ -63,6 +63,13 @@ echo [3/3] Checking flash layout...
 python "%HERE%loader_offset\check_flash_layout.py" "%OUT_DIR%\RetroDict.ino.uf2"
 if %errorlevel% neq 0 ( echo [ERROR] Layout check failed - do not flash this file. & exit /b 1 )
 
+if exist "%HERE%assets\RetroDict.ino.RAW" (
+    copy /y "%HERE%assets\RetroDict.ino.RAW" "%OUT_DIR%\RetroDict.ino.RAW" >nul
+    echo Cover art copied next to the uf2 ^(loader menu^).
+) else (
+    echo [note] assets\RetroDict.ino.RAW missing - run tools\mkicon.py.
+)
+
 if not exist "%LOADER%\build\trampoline.uf2" (
     echo.
     echo [note] "%LOADER%\build\trampoline.uf2" not found, skipping the merge.
@@ -81,3 +88,4 @@ echo.
 echo SUCCESS
 echo   %OUT_DIR%\RetroDict.ino.uf2          for the SD card (loader on board)
 echo   %OUT_DIR%\RetroDict_standalone.uf2   flashable over USB
+echo   %OUT_DIR%\RetroDict.ino.RAW          cover art, same SD card root

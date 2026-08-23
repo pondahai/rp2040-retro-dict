@@ -3,6 +3,9 @@
 # loader_offset 生成物（依 arduino-pico 版本重跑產生）
 # 作業系統
 # 字典原始資料與轉檔產物（體積大，另外取得，不進版控）
+# 選單封面圖的原始大圖（版控裡的來源是 assets/retrodict_icon.png）
+/RetroDict.ino.jpg
+
 # 語音素材
 *.7z
 *.bin
