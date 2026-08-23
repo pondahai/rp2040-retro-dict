@@ -164,6 +164,8 @@ static void blit()
 
 static dict g_dict;
 static font g_font_dev;
+// 40KB：兩張碼位表 + 窄字前進寬度 + ASCII 字模，實測要 39,123 bytes。
+static uint8_t g_font_cache[40 * 1024];
 static ui_target g_target;
 static app g_app;
 static keys g_keys;
@@ -218,12 +220,29 @@ static void display_begin()
     digitalWrite(PIN_DISPLAY_BL, HIGH);      // 初始化完才點背光，避免雪花
 }
 
+// SD 卡的 SPI 時脈。函式庫預設是 SPI_HALF_SPEED = 4MHz，光是打完一個 512B
+// 磁區的位元就要 1ms —— 字典是整個生命週期都在讀 SD 的東西（PLAN.md 3），
+// 這個預設值等於把每次查詢都乘上四倍。25MHz 是 SPI 模式的常見上限，接線品質
+// 不好時會掛不起來，所以由快到慢試，掛得起來就用那一階。
+static const uint32_t SD_SPEEDS[] = { SD_SCK_MHZ(25), SD_SCK_MHZ(12),
+                                      SD_SCK_MHZ(4) };
+static uint32_t g_sd_mhz = 0;
+
 static bool sd_begin()
 {
     SPI1.setRX(PIN_SD_MISO);
     SPI1.setTX(PIN_SD_MOSI);
     SPI1.setSCK(PIN_SD_SCK);
-    if (!SD.begin(PIN_SD_CS, SPI1))
+
+    for (size_t i = 0; i < sizeof(SD_SPEEDS) / sizeof(SD_SPEEDS[0]); i++) {
+        if (SD.begin(PIN_SD_CS, SD_SPEEDS[i], SPI1)) {
+            g_sd_mhz = SD_SPEEDS[i] / 1000000UL;
+            Serial.printf("SD: %lu MHz\n", (unsigned long)g_sd_mhz);
+            break;
+        }
+        SD.end();
+    }
+    if (!g_sd_mhz)
         return false;
 
     g_ec_idx.f  = SD.open("/DICT/EC.IDX",  FILE_READ);
@@ -257,6 +276,19 @@ void setup()
         tft.fillScreen(0xF800);
         Serial.println("FONT.BIN open failed");
         return;
+    }
+
+    // 字模的碼位表搬進 RAM。**這一步不是可有可無的最佳化**：沒有它，每畫一個
+    // 字要在 14,516 筆的碼位表上二分搜尋 14 步，每一步落在不同的 512B 區塊上
+    // —— 一張畫面 2,346 次 SD 讀取，按一個字母要等好幾秒。掛上之後 153 次。
+    // 剩下的空間拿去放 ASCII 字模，英文畫面幾乎整頁都是它。
+    {
+        uint32_t got = font_cache(&g_font_dev, g_font_cache,
+                                  sizeof(g_font_cache));
+        Serial.printf("font cache: %lu / %lu bytes%s\n",
+                      (unsigned long)got,
+                      (unsigned long)font_cache_size(&g_font_dev, 1),
+                      g_font_dev.has_ascii ? " (with ASCII)" : "");
     }
 
     memset(&g_dict, 0, sizeof(g_dict));

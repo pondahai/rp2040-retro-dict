@@ -199,9 +199,10 @@ void ui_render_result(const ui_target *t, font *f, const ui_entry *e,
     scan_body(f, e, body_emit, &b);
 
     t->fill(t->ctx, 0, UI_H - UI_LINE_H, UI_W, UI_LINE_H, UI_BAR);
+    /* 這台機器沒有獨立的 F 鍵，F1~F10 是 Fn + 數字（keys.c 的 fn_translate）。
+     * 畫面上就照實寫，不要寫「F1」讓人去按一顆不存在的鍵。 */
     ui_draw_text(t, f, 3, UI_H - UI_LINE_H + 1,
-                 "\xe8\x8b\xb1\xe6\xbc\xa2  F1 \xe7\x99\xbc\xe9\x9f\xb3  "
-                 "F2 \xe5\x88\x87\xe6\x8f\x9b  F3 \xe6\x94\xbe\xe5\xa4\xa7",
+                 "英漢  Fn+1 發音  Fn+2 切換  Fn+3 放大",
                  UI_BAR_RAMP);
 }
 

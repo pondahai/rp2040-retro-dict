@@ -133,7 +133,8 @@ def render_result(font, word, scroll=0):
         y += LINE_H
 
     d.rectangle([0, H - LINE_H, W - 1, H - 1], fill=BAR)
-    draw_text(img, font, 3, H - LINE_H + 1, "英漢  F1 發音  F2 切換  F3 放大",
+    draw_text(img, font, 3, H - LINE_H + 1,
+              "英漢  Fn+1 發音  Fn+2 切換  Fn+3 放大",
               BAR_RAMP)
     return img
 

@@ -32,6 +32,11 @@ typedef struct {
     uint8_t  buf[FONT_BLOCK];
     uint32_t reads;               /* 實際讀取次數，供效能驗證 */
 
+    /* 選用的 RAM 快取（見 font_cache）。沒掛就全部走 SD。 */
+    const uint8_t *idx_cache;     /* 兩張碼位表 + 窄字前進寬度，接續擺放 */
+    const uint8_t *ascii_cache;   /* ASCII 的字模點陣，可有可無 */
+    uint8_t  has_idx, has_ascii;
+
     uint8_t  cell_h, cjk_w, narrow_w, bits;
     uint16_t wide_count, narrow_count;
     uint32_t wide_stride, narrow_stride;
@@ -49,6 +54,22 @@ typedef struct {
 } font_glyph;
 
 int font_open(font *f, font_read_fn read, void *ctx);
+
+/* 把碼位表搬進 RAM。**這是效能的關鍵，不是可有可無的最佳化。**
+ *
+ * 沒有它的話，`font_get()` 每查一個字要在 14,516 筆的碼位表上二分搜尋 14 步，
+ * 而每一步都落在不同的 512B 區塊上 —— 也就是**每個字十幾次 SD 讀取**。實測
+ * 一張「邊打邊查」畫面要讀 2,346 次，在板子上就是每按一個字母卡好幾秒。
+ *
+ * buf 由呼叫端提供（這一層一樣不 malloc）。要多大用 font_cache_size() 問，
+ * 給不夠就只掛得下前面幾張表，給 0 就是全部走 SD。回傳實際用掉幾個 byte。
+ *
+ * 優先順序：兩張碼位表與窄字前進寬度（查表用，每個字都要）> ASCII 字模
+ * （英文畫面的內容幾乎都是它）。漢字字模不快取 —— 14,516 個要 3.5MB。
+ */
+uint32_t font_cache(font *f, uint8_t *buf, uint32_t size);
+/* 全部掛滿要多少 byte。分成兩段：索引段（必要）與 ASCII 段（加分）。 */
+uint32_t font_cache_size(const font *f, int with_ascii);
 /* 回 1 = 找到並填好 g，0 = 缺字（呼叫端畫空框），負值 = 錯誤。 */
 int font_get(font *f, uint32_t cp, font_glyph *g);
 /* 只要前進寬度時用這個 —— 斷行會逐字問，不必每次解 256 個像素。

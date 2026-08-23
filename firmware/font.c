@@ -26,14 +26,87 @@ static int fetch(font *f, uint32_t off, uint32_t len, uint8_t *out)
     return FONT_OK;
 }
 
+static int find(font *f, uint32_t base, int count, uint32_t cp);
+
+#define ASCII_FIRST 0x20
+#define ASCII_LAST  0x7E
+#define ASCII_COUNT (ASCII_LAST - ASCII_FIRST + 1)
+
+/* 索引段的長度：寬碼位表 + 窄碼位表 + 窄字前進寬度。 */
+static uint32_t idx_bytes(const font *f)
+{
+    return (uint32_t)f->wide_count * 2 + (uint32_t)f->narrow_count * 2 +
+           f->narrow_count;
+}
+
+uint32_t font_cache_size(const font *f, int with_ascii)
+{
+    uint32_t n = idx_bytes(f);
+    if (with_ascii)
+        n += ASCII_COUNT * f->narrow_stride;
+    return n;
+}
+
 static int read_u16(font *f, uint32_t off, uint16_t *out)
 {
     uint8_t b[2];
-    int rc = fetch(f, off, 2, b);
+    int rc;
+    if (f->has_idx && off >= f->wide_idx &&
+        off + 2 <= f->wide_idx + idx_bytes(f)) {
+        const uint8_t *p = f->idx_cache + (off - f->wide_idx);
+        *out = (uint16_t)(p[0] | (p[1] << 8));
+        return FONT_OK;
+    }
+    rc = fetch(f, off, 2, b);
     if (rc != FONT_OK)
         return rc;
     *out = (uint16_t)(b[0] | (b[1] << 8));
     return FONT_OK;
+}
+
+/* 碼位表與前進寬度表在檔案裡是接續的（中間有 4-byte 對齊的空隙），
+ * 快取時把空隙一起收進來，位移就能直接用檔案位移減掉起點。 */
+uint32_t font_cache(font *f, uint8_t *buf, uint32_t size)
+{
+    uint32_t need = idx_bytes(f);
+    uint32_t used = 0;
+
+    f->has_idx = f->has_ascii = 0;
+    f->idx_cache = f->ascii_cache = 0;
+    if (!buf || size < need)
+        return 0;
+    if (fetch(f, f->wide_idx, need, buf) != FONT_OK)
+        return 0;
+    f->idx_cache = buf;
+    f->has_idx = 1;
+    used = need;
+
+    /* 剩下的空間拿去放 ASCII 字模。英文畫面幾乎整頁都是它，等於把最常走的
+     * 那條路整條搬進 RAM。 */
+    if (size - used >= ASCII_COUNT * f->narrow_stride) {
+        uint32_t i;
+        uint8_t *dst = buf + used;
+        int ok = 1;
+        for (i = 0; i < ASCII_COUNT; i++) {
+            int k = find(f, f->narrow_idx, f->narrow_count, ASCII_FIRST + i);
+            if (k < 0) {          /* 這個碼位字型裡沒有，填 0，查的時候會走缺字 */
+                memset(dst + i * f->narrow_stride, 0, f->narrow_stride);
+                continue;
+            }
+            if (fetch(f, f->narrow_off + (uint32_t)k * f->narrow_stride,
+                      f->narrow_stride, dst + i * f->narrow_stride)
+                != FONT_OK) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) {
+            f->ascii_cache = dst;
+            f->has_ascii = 1;
+            used += ASCII_COUNT * f->narrow_stride;
+        }
+    }
+    return used;
 }
 
 static uint32_t rd16(const uint8_t *p) { return (uint32_t)(p[0] | (p[1] << 8)); }
@@ -105,14 +178,20 @@ static int find(font *f, uint32_t base, int count, uint32_t cp)
     return -1;
 }
 
-static int unpack(font *f, uint32_t off, int width, font_glyph *g)
+static int narrow_adv_of(font *f, int i, uint8_t *out)
 {
-    uint8_t packed[FONT_MAX_CELL * ((FONT_MAX_CELL * 2 + 7) / 8)];
+    if (f->has_idx) {
+        *out = f->idx_cache[(f->narrow_adv - f->wide_idx) + (uint32_t)i];
+        return FONT_OK;
+    }
+    return fetch(f, f->narrow_adv + (uint32_t)i, 1, out);
+}
+
+static void unpack_mem(font *f, const uint8_t *packed, int width,
+                       font_glyph *g)
+{
     int per_row = (width * 2 + 7) / 8;
     int y, x;
-
-    if (fetch(f, off, (uint32_t)per_row * f->cell_h, packed) != FONT_OK)
-        return FONT_E_IO;
     for (y = 0; y < f->cell_h; y++) {
         const uint8_t *row = packed + y * per_row;
         for (x = 0; x < width; x++)
@@ -120,6 +199,16 @@ static int unpack(font *f, uint32_t off, int width, font_glyph *g)
     }
     g->cell_w = (uint8_t)width;
     g->cell_h = f->cell_h;
+}
+
+static int unpack(font *f, uint32_t off, int width, font_glyph *g)
+{
+    uint8_t packed[FONT_MAX_CELL * ((FONT_MAX_CELL * 2 + 7) / 8)];
+    int per_row = (width * 2 + 7) / 8;
+
+    if (fetch(f, off, (uint32_t)per_row * f->cell_h, packed) != FONT_OK)
+        return FONT_E_IO;
+    unpack_mem(f, packed, width, g);
     return FONT_OK;
 }
 
@@ -134,10 +223,14 @@ int font_get(font *f, uint32_t cp, font_glyph *g)
         return FONT_E_IO;
     if (i >= 0) {
         uint8_t adv;
-        if (fetch(f, f->narrow_adv + (uint32_t)i, 1, &adv) != FONT_OK)
+        if (narrow_adv_of(f, i, &adv) != FONT_OK)
             return FONT_E_IO;
-        if (unpack(f, f->narrow_off + (uint32_t)i * f->narrow_stride,
-                   f->narrow_w, g) != FONT_OK)
+        /* ASCII 的點陣可能已經在 RAM 裡，那就一次 SD 都不用讀。 */
+        if (f->has_ascii && cp >= ASCII_FIRST && cp <= ASCII_LAST)
+            unpack_mem(f, f->ascii_cache +
+                       (cp - ASCII_FIRST) * f->narrow_stride, f->narrow_w, g);
+        else if (unpack(f, f->narrow_off + (uint32_t)i * f->narrow_stride,
+                        f->narrow_w, g) != FONT_OK)
             return FONT_E_IO;
         g->adv = adv;
         return 1;
@@ -161,7 +254,7 @@ int font_advance(font *f, uint32_t cp)
     int i = find(f, f->narrow_idx, f->narrow_count, cp);
     if (i >= 0) {
         uint8_t adv;
-        if (fetch(f, f->narrow_adv + (uint32_t)i, 1, &adv) != FONT_OK)
+        if (narrow_adv_of(f, i, &adv) != FONT_OK)
             return f->cjk_w;
         return adv;
     }

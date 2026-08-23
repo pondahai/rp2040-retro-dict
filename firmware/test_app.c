@@ -342,6 +342,18 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    {
+        /* 板子上也是這樣掛的（RetroDict.ino）。不掛的話光是碼位表的二分搜尋
+         * 就要每個字十幾次 SD 讀取 —— 這裡印出來的 font_reads 就是那個成本。 */
+        static uint8_t cache[64 * 1024];
+        uint32_t want = font_cache_size(&FNT, 1);
+        uint32_t got = font_cache(&FNT, cache, sizeof(cache));
+        fprintf(stderr, "字模快取：掛上 %u / 想要 %u bytes%s\n",
+                (unsigned)got, (unsigned)want,
+                got ? (FNT.has_ascii ? "（含 ASCII 字模）" : "（只有索引）")
+                    : "（沒掛上）");
+    }
+
     fbuf_init(&FB);
     fbuf_target(&FB, &T);
     keys_init(&KEYS);
