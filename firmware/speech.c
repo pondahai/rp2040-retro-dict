@@ -61,6 +61,20 @@ int speech_ids(speech *sp, const uint8_t *ids, int nbytes, int is_zh)
     return sp->samples;
 }
 
+int speech_letters(speech *sp, const char *ascii)
+{
+    uint16_t ids[LTS_MAX_PH_PER_WORD * 4];
+    int n, i;
+
+    sp->samples = 0;
+    if (!ascii)
+        return 0;
+    n = lts_to_ids(ascii, ids, (int)(sizeof(ids) / sizeof(ids[0])));
+    for (i = 0; i < n; i++)
+        one(sp, ids[i], 0);
+    return sp->samples;
+}
+
 int speech_spell(speech *sp, const char *ascii)
 {
     sp->samples = 0;

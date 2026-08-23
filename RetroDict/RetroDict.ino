@@ -34,6 +34,7 @@ extern "C" {
 #include "src/rd_fbuf.h"
 #include "src/rd_font.h"
 #include "src/rd_keys.h"
+#include "src/rd_lts.h"
 #include "src/rd_speech.h"
 #include "src/rd_ui.h"
 }
@@ -242,10 +243,13 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
     g_pcm_n = 0;
     speech_init(&g_speech, pcm_sink, NULL, g_syn_work, g_syn_seg, g_syn_pcm8,
                 SPEAK_MAX_SEG);
-    if (ids && nbytes >= 2)
-        speech_ids(&g_speech, ids, nbytes, is_zh);
-    else
-        speech_spell(&g_speech, fallback);   // 查不到就逐字母唸
+    if (ids && nbytes >= 2) {
+        speech_ids(&g_speech, ids, nbytes, is_zh);      // 有音標就唸音標
+    } else if (speech_letters(&g_speech, fallback) <= 0) {
+        // 沒有音標 -> 用字母規則現場推（lts.c）。連規則都推不出東西
+        // （純數字、純符號）才退回逐字母唸。
+        speech_spell(&g_speech, fallback);
+    }
     Serial.printf("speak: %d samples (ids=%d)\n", g_pcm_n, nbytes / 2);
     if (g_pcm_n <= 0) {
         // 合成一個取樣點都沒產出。低頻短嗶 = 「有收到 Fn+1，但沒東西可唸」，

@@ -15,6 +15,7 @@
 
 #include <stdint.h>
 
+#include "lts.h"
 #include "synth.h"
 
 /* 一段波形。n 是取樣點數，8-bit 無號（128 = 靜音），SYN_SR Hz。 */
@@ -38,8 +39,12 @@ void speech_init(speech *sp, speech_sink sink, void *ctx,
  * 回傳取樣點總數，負值為錯誤。 */
 int speech_ids(speech *sp, const uint8_t *ids, int nbytes, int is_zh);
 
-/* 逐字母唸（a-p-p）。查無此字時用它，這也是 1980 年代電子字典的行為。
- * 只認 ASCII 字母與數字，其餘跳過。回傳取樣點總數。 */
+/* 逐字母唸（a-p-p）。只認 ASCII 字母與數字，其餘跳過。回傳取樣點總數。 */
 int speech_spell(speech *sp, const char *ascii);
+
+/* **沒有音標時走這裡**：用 lts.c 的字母規則現場推出音素再唸。
+ * 空白／連字號分開的每個字各自唸（"NI HAO" 是兩段）。
+ * 規則推不出任何音素時（純數字、純符號）回 0，呼叫端可以退回逐字母唸。 */
+int speech_letters(speech *sp, const char *ascii);
 
 #endif /* SPEECH_H */

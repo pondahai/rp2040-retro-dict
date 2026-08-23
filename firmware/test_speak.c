@@ -3,6 +3,7 @@
  *
  *   test_speak <DICT目錄> word <單字> <輸出.wav>    查字典唸（有音素資料才行）
  *   test_speak <DICT目錄> spell <字串> <輸出.wav>   逐字母唸
+ *   test_speak <DICT目錄> letters <字串> <輸出.wav> 用字母規則推（lts.c）
  *   test_speak <DICT目錄> auto <字串> <輸出.wav>    查得到就唸，查不到就逐字母
  *
  * auto 就是 app.c 在輸入畫面按 Fn+1 的行為。
@@ -142,6 +143,11 @@ int main(int argc, char **argv)
     if (strcmp(mode, "spell") == 0) {
         speech_spell(&sp, arg);
         spelled = 1;
+    } else if (strcmp(mode, "letters") == 0) {
+        if (speech_letters(&sp, arg) <= 0) {
+            speech_spell(&sp, arg);
+            spelled = 1;
+        }
     } else {
         uint8_t key[DICT_MAX_KEY];
         uint32_t klen = dict_normalize_ec(arg, key, sizeof(key));
@@ -155,8 +161,11 @@ int main(int argc, char **argv)
             speech_ids(&sp, syl, slen, 0);
             printf("查到「%s」，%d 個音素\n", arg, slen / 2);
         } else if (strcmp(mode, "auto") == 0) {
-            speech_spell(&sp, arg);
-            spelled = 1;
+            /* 板子上的順序：有音標唸音標、沒有就用字母規則、再不行才逐字母 */
+            if (speech_letters(&sp, arg) <= 0) {
+                speech_spell(&sp, arg);
+                spelled = 1;
+            }
         } else {
             fprintf(stderr, "「%s」查不到或沒有音素資料\n", arg);
             return 3;
