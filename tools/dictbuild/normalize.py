@@ -45,6 +45,7 @@ def normalize_ec(word: str) -> bytes:
 def normalize_ce(word: str) -> bytes:
     """中文鍵：UTF-8 原樣，僅去頭尾空白。
 
-    v1 不做繁簡轉換（FORMAT.md §6）—— 查繁體字若該筆只有簡體會查不到。
+    不做繁簡轉換（FORMAT.md §6）。CE 的鍵是**繁體**（CC-CEDICT 本來就
+    兩種都給），因為這台機器的中文輸入是注音，打出來就是繁體。
     """
     return word.strip().encode("utf-8")

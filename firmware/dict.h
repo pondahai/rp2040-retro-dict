@@ -30,7 +30,7 @@
 #define DICT_T_FREQ     0x08
 #define DICT_T_SYL_EN   0x09
 #define DICT_T_SYL_ZH   0x0A
-#define DICT_T_TRAD     0x0B
+#define DICT_T_SIMP     0x0B   /* 簡體詞頭；詞頭本身是繁體 */
 
 typedef enum {
     DICT_OK = 0,

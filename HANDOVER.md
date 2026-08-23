@@ -36,6 +36,7 @@
 | 偏移版編譯 | 完成，`build_offset.bat`，佈局檢查通過 |
 | 選單封面圖 | 完成，`assets/RetroDict.ino.RAW`，`tools/mkicon.py` 可重產 |
 | 發音接上 UI | F1 只有掛勾，還沒接 synth.c |
+| CE 繁體化 | 完成：索引鍵與詞頭是繁體，簡體在 `SIMP` 欄 |
 | 中英切換 / 注音 IME | **完全沒開始** |
 
 純 C 那幾支加起來約 **12.7 KB、靜態 RAM 0**（`-Os`、Cortex-M0+）：`dict.c` 1,444 B、
@@ -119,6 +120,7 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
 | 最終產物 | **偏移版**（連結 `0x10004000`），見 PLAN.md §2.8 |
 | 授權 | GPL-3.0 |
 | 字典資料 | ECDICT + CC-CEDICT，不碰商業字典 |
+| 繁簡 | **不做轉換**。來源有繁體就用繁體：CE 的索引鍵與詞頭是繁體、簡體降級成 `SIMP` 欄位；EC 的中文釋義只有簡體（ECDICT 沒有繁體），維持原樣 |
 | 鍵盤對照表 | 用 KeyboardTester README 的**實測真值表** |
 | 架構 | 後台與前端嚴格分離，後台可在 PC 上測 |
 | 字典檔格式 | v1 定稿，見 FORMAT.md |
@@ -147,11 +149,8 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
    **每個「聽不出差別」都代表一塊 `tools/synth/prosody.py` 的規則可以刪掉。**
    這是唯一還沒兌現的實驗價值，而且很便宜。
 2. **D4**：生字本／考綱篩選要不要進第一版（ECDICT 已附 `tag` 欄位）
-3. **繁體化** —— ECDICT 的中文釋義是簡體。PC 端轉檔時用 OpenCC `s2twp`
-   轉一次即可（本機已裝 `opencc-python-reimplemented`，實測 0.4ms/筆、
-   770,611 筆約 5 分鐘），韌體完全不動。轉完 `FONT.BIN` 要重產（用到的字
-   變了），SD 卡要重新複製。漢英方向的 CC-CEDICT 本來就有繁體欄位（`T_TRAD`），
-   改成優先用它就好
+3. **注音 IME** —— 漢英方向的最後一塊。要先 clone `pico_keyboard_ime_terminal`
+   （本機還沒有），並且注意 RAM 只剩約 34%
 4. **F1 接上 synth.c** —— 目前 `app.c` 只有掛勾（`a->speak`），
    還缺 PWM 輸出與把音標餵給合成器
 5. **注音 IME**：要先 clone `pico_keyboard_ime_terminal`，**本機還沒有**

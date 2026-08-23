@@ -138,9 +138,14 @@ def test_builders():
         check(stats["entries"] == 2, "跳過註解，收下 2 筆")
         check(stats.get("bad_lines") == 1, "壞行被計數而非中斷轉檔")
         dd = C.Dictionary(os.path.join(d, "CE.IDX"), os.path.join(d, "CE.DAT"))
-        hit = dd.lookup(normalize_ce("中国"))
-        check(len(hit) == 1, "用簡體查得到")
-        check(hit and hit[0].fields[C.T_TRAD] == "中國".encode("utf-8"), "繁體存在 TRAD 欄")
+        # 索引鍵是**繁體**（注音打出來就是繁體）—— 簡體查不到是預期行為，
+        # 不是壞掉。簡體降級成 SIMP 欄位，資料沒有丟。
+        check(not dd.lookup(normalize_ce("中国")), "用簡體查不到（鍵是繁體）")
+        hit = dd.lookup(normalize_ce("中國"))
+        check(len(hit) == 1, "用繁體查得到")
+        check(hit and hit[0].fields[C.T_HEADWORD] == "中國".encode("utf-8"),
+              "詞頭是繁體")
+        check(hit and hit[0].fields[C.T_SIMP] == "中国".encode("utf-8"), "簡體存在 SIMP 欄")
         check(hit and C.T_SYL_ZH in hit[0].fields, "發音音節 id 已在轉檔期算好")
         dd.close()
 

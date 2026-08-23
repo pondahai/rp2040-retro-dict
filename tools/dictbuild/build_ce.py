@@ -28,21 +28,24 @@ def parse(path, stats=None):
                     stats["bad_lines"] = stats.get("bad_lines", 0) + 1
                 continue
             trad, simp, py, defs = m.groups()
-            key = normalize_ce(simp)
+            # **索引鍵與詞頭都用繁體。** CC-CEDICT 兩種字形都給了，而這台
+            # 機器的中文輸入是注音 —— 打出來的就是繁體，用簡體當鍵會查不到。
+            # 簡體降級成欄位（同一筆資料，只是另一種字形）。
+            key = normalize_ce(trad)
             if not key:
                 continue
             senses = [d for d in defs.split("/") if d]
             fields = [
-                (C.T_HEADWORD, simp.encode("utf-8")),
+                (C.T_HEADWORD, trad.encode("utf-8")),
                 (C.T_PINYIN, py.encode("utf-8")),
                 (C.T_DEF_EN, "\n".join(senses).encode("utf-8")),
             ]
             if trad != simp:
-                fields.append((C.T_TRAD, trad.encode("utf-8")))
+                fields.append((C.T_SIMP, simp.encode("utf-8")))
             syl = pinyin.to_ids(py, stats=stats, unknown=unknown)
             if syl:
                 fields.append((C.T_SYL_ZH, syl))
-            yield C.Entry(key=key, fields=fields, rank=rank_ce(simp, senses))
+            yield C.Entry(key=key, fields=fields, rank=rank_ce(trad, senses))
 
 
 def rank_ce(word, senses):

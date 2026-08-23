@@ -31,7 +31,7 @@ T_EXCHANGE = 0x07
 T_FREQ = 0x08
 T_SYL_EN = 0x09
 T_SYL_ZH = 0x0A
-T_TRAD = 0x0B
+T_SIMP = 0x0B          # 簡體詞頭（詞頭本身是繁體）
 
 MAX_SCAN = 64  # §3.3 同鍵鄰居掃描上限
 
