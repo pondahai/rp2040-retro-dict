@@ -9,21 +9,38 @@
 **左邊那張是真的**：字模取自本專案生態系已經在用的 Cubic 11（俐方體十一號），
 從 rp2040-ili9341-infones 的 font_cjk.h 直接讀出來，不是模擬。
 
-右邊是用系統的思源黑體光柵化到 16x16 —— 那只是**體驗預覽**，不是最終字型。
-16x16 要用哪套字型、授權如何（U4）還沒解決。
+右邊是 Ark Pixel Font（方舟像素字體）16px，**同樣是 SIL OFL 1.1**，
+與 Cubic 11 授權條款相同 —— U4 因此不再是風險。它是為 16px 設計的點陣字，
+不是向量字縮小，所以這張預覽也是像素精確的。
+
+畫面內容取自**字典裡的真實資料**（ECDICT 的 dictionary 詞條，簡體），
+不是手打的樣本 —— 手打成繁體會讓判斷失真。
 """
 
 import os
 import re
 import sys
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
+
+import bdf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 CJK_H = os.path.join(ROOT, "..", "rp2040-ili9341-infones",
                      "software", "infones", "font_cjk.h")
 OUT = os.path.join(ROOT, "out", "font")
+# Ark Pixel 有 10/12/16px，但**16px 的 CJK 幾乎還沒做**：實測只有 97 個漢字，
+# 常用 40 字只涵蓋 9 個。12px 才是完整的（18,299 個漢字，常用字 40/40）。
+# 這是量出來的，不是從文件讀的 —— 官網沒有列各尺寸的覆蓋率。
+ARK = {
+    12: (os.path.join(ROOT, "data", "ark12"),
+         "ark-pixel-12px-proportional-zh_cn.bdf",
+         "ark-pixel-12px-proportional-latin.bdf"),
+    16: (os.path.join(ROOT, "data", "ark"),
+         "ark-pixel-16px-proportional-zh_cn.bdf",
+         "ark-pixel-16px-proportional-latin.bdf"),
+}
 
 W, H = 320, 240
 FG = (200, 255, 200)      # 綠字，配合復古定位
@@ -102,16 +119,18 @@ def draw_cubic(img, glyphs, ascii_glyphs, rows_info, x, y, text, color):
 # 畫面內容：一個真實的查詢結果
 # ---------------------------------------------------------------------------
 
+# 取自 out/DICT 的真實詞條（ECDICT 的 dictionary）。ECDICT 是簡體，
+# 手打成繁體會讓字型判斷失真 —— 簡繁的筆畫密度差很多。
 ENTRY_EN = "dictionary"
 ENTRY_IPA = "[ 'dikʃənəri ]"
 ENTRY_LINES = [
-    "n. 字典，詞典；詞彙",
-    "[計] 資料字典",
+    "n. 字典, 词典",
+    "[计] 词典",
     "",
-    "the dictionary of a language",
-    "一種語言的詞典",
+    "a reference book containing an",
+    "alphabetical list of words",
 ]
-STATUS = "英漢  F1 發音  F2 切換"
+STATUS = "英汉  F1 发音  F2 切换"
 
 
 def render_cubic():
@@ -133,32 +152,42 @@ def render_cubic():
     return img
 
 
-def _find_font():
-    for name in ("msjh.ttc", "msyh.ttc", "mingliu.ttc", "simsun.ttc"):
-        p = os.path.join("C:\\Windows\\Fonts", name)
-        if os.path.exists(p):
-            return p
-    return None
+def load_ark(size):
+    d, zh_name, latin_name = ARK[size]
+    zh = os.path.join(d, zh_name)
+    latin = os.path.join(d, latin_name)
+    if not (os.path.exists(zh) and os.path.exists(latin)):
+        return None, None
+    return bdf.load(zh), bdf.load(latin)
 
 
-def render_16():
-    path = _find_font()
-    if not path:
+def draw_ark(img, zh, latin, x, baseline, text, color):
+    """Ark Pixel 的拉丁字母與漢字分在不同檔案，各取各的。"""
+    px = img.load()
+    for ch in text:
+        cp = ord(ch)
+        font = latin if cp in latin.glyphs else zh
+        x += bdf.blit(px, font, x, baseline, cp, color, (W, H))
+    return x
+
+
+def render_ark(size, line_h):
+    zh, latin = load_ark(size)
+    if zh is None:
         return None
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
-    # 16px 的中文 + 對應的半形英數
-    cjk = ImageFont.truetype(path, 16)
-    d.rectangle([0, 0, W - 1, 17], fill=(20, 50, 20))
-    d.text((2, 0), ENTRY_EN, font=cjk, fill=FG)
-    d.text((110, 1), ENTRY_IPA, font=cjk, fill=DIM)
-    y = 22
+    d.rectangle([0, 0, W - 1, line_h - 3], fill=(20, 50, 20))
+    base = line_h - 5
+    draw_ark(img, zh, latin, 2, base, ENTRY_EN, FG)
+    draw_ark(img, zh, latin, 108, base, ENTRY_IPA, DIM)
+    y = base + line_h
     for line in ENTRY_LINES:
         if line:
-            d.text((2, y), line, font=cjk, fill=FG)
-        y += 20
-    d.rectangle([0, H - 18, W - 1, H - 1], fill=(20, 50, 20))
-    d.text((2, H - 18), STATUS, font=cjk, fill=DIM)
+            draw_ark(img, zh, latin, 2, y, line, FG)
+        y += line_h
+    d.rectangle([0, H - line_h + 1, W - 1, H - 1], fill=(20, 50, 20))
+    draw_ark(img, zh, latin, 2, H - 5, STATUS, DIM)
     return img
 
 
@@ -175,7 +204,8 @@ def label(img, text, scale=2):
 def main():
     os.makedirs(OUT, exist_ok=True)
     a = render_cubic()
-    b = render_16()
+    b = render_ark(12, 15)
+    c = render_ark(16, 20)
     made = []
 
     if a:
@@ -184,18 +214,28 @@ def main():
     else:
         print("找不到 %s，跳過 11x11" % CJK_H)
     if b:
-        b.save(os.path.join(OUT, "16x16.png"))
+        b.save(os.path.join(OUT, "12x12.png"))
+        made.append("12x12.png")
+    if c:
+        c.save(os.path.join(OUT, "16x16.png"))
         made.append("16x16.png")
-    else:
-        print("找不到系統中文字型，跳過 16x16")
 
-    if a and b:
-        la, lb = label(a, "11x11 (Cubic 11, 專案現有)"), label(b, "16x16 (預覽)")
+    panels = []
+    if a:
+        panels.append(label(a, "11x11  Cubic 11 (OFL 1.1, 生態系已有, 7701 字)"))
+    if b:
+        panels.append(label(b, "12x12  Ark Pixel (OFL 1.1, 18299 字)"))
+    if c:
+        panels.append(label(c, "16x16  Ark Pixel (CJK 只有 97 字, 不能用)"))
+    if panels:
         gap = 16
-        both = Image.new("RGB", (la.width + gap + lb.width,
-                                 max(la.height, lb.height)), (0, 0, 0))
-        both.paste(la, (0, 0))
-        both.paste(lb, (la.width + gap, 0))
+        total_w = sum(p.width for p in panels) + gap * (len(panels) - 1)
+        both = Image.new("RGB", (total_w, max(p.height for p in panels)),
+                         (0, 0, 0))
+        x = 0
+        for p in panels:
+            both.paste(p, (x, 0))
+            x += p.width + gap
         both.save(os.path.join(OUT, "compare.png"))
         made.append("compare.png")
 
@@ -203,6 +243,7 @@ def main():
     print()
     print("320x240 可容納：")
     print("  11x11 -> 約 %d 欄 x %d 列（中文）" % (W // 12, H // 15))
+    print("  12x12 -> 約 %d 欄 x %d 列（中文）" % (W // 13, H // 15))
     print("  16x16 -> 約 %d 欄 x %d 列（中文）" % (W // 16, H // 20))
 
 
