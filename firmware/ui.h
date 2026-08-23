@@ -39,6 +39,16 @@ int ui_draw_text(const ui_target *t, font *f, int x, int top,
  * 按實際字寬算，不是按字數 —— 中英混排字寬不同。 */
 int ui_wrap_next(font *f, const char *utf8, int max_w);
 
+/* 整串字的寬度（像素）。右下角的狀態格要靠它靠右對齊。 */
+int ui_text_width(font *f, const char *utf8);
+
+/* 右下角的狀態格：模式（英／英大／注）與發音中的提示。
+ *
+ * 單獨一支是因為**發音時不能整頁重畫** —— 重畫要從 SD 讀上百次字模，
+ * 一次一百多毫秒，音訊的緩衝區會來不及填而斷音。呼叫端只重畫這一小塊，
+ * 再把最下面那一條掃描線送上螢幕就好。 */
+void ui_draw_status(const ui_target *t, font *f, const char *status);
+
 /* 詞條畫面。欄位是 UTF-8 字串，NULL 表示沒有。 */
 typedef struct {
     const char *headword;
@@ -47,9 +57,10 @@ typedef struct {
     const char *def_en;
 } ui_entry;
 
-/* scroll = 從內文的第幾行開始畫（0 = 頂）。長詞條靠它捲動。 */
+/* scroll = 從內文的第幾行開始畫（0 = 頂）。長詞條靠它捲動。
+ * bar 是最下面那條狀態列的字（英漢／漢英不同），NULL = 不畫字。 */
 void ui_render_result(const ui_target *t, font *f, const ui_entry *e,
-                      int scroll);
+                      int scroll, const char *bar, const char *status);
 /* 內文一共幾行，以及一頁裝得下幾行 —— 捲動上限由呼叫端算，這一層不記狀態。 */
 int  ui_body_lines(font *f, const ui_entry *e);
 int  ui_body_rows(void);
@@ -60,9 +71,10 @@ typedef struct {
     const char *trans;      /* 只畫第一行 */
 } ui_cand;
 
-/* sel = 反白哪一列（-1 = 都不反白）。 */
+/* sel = 反白哪一列（-1 = 都不反白）。bar 同上。 */
 void ui_render_typing(const ui_target *t, font *f, const char *typed,
-                      const ui_cand *rows, int n, int sel);
+                      const ui_cand *rows, int n, int sel, const char *bar,
+                      const char *status);
 /* 候選清單最多畫得下幾列。 */
 int  ui_cand_rows(void);
 

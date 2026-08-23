@@ -1,5 +1,7 @@
 #include "app.h"
 
+#include "ime.h"
+
 #include <string.h>
 
 static void copy_field(const dict_record *rec, uint8_t tag, char *buf,
@@ -19,6 +21,23 @@ static void copy_field(const dict_record *rec, uint8_t tag, char *buf,
     *out = buf;
 }
 
+/* 中文鍵不做正規化，UTF-8 原樣（與 tools/dictbuild/normalize.py 的
+ * normalize_ce 一致 —— 那邊也只是 strip）。 */
+static uint32_t norm_key(const app *a, const char *in, uint8_t *out,
+                         uint32_t out_size)
+{
+    uint32_t n = 0;
+    if (a->dir == APP_EC)
+        return dict_normalize_ec(in, out, out_size);
+    while (*in == ' ')
+        in++;
+    while (*in && n + 1 < out_size)
+        out[n++] = (uint8_t)*in++;
+    while (n && out[n - 1] == ' ')
+        n--;
+    return n;
+}
+
 /* 候選清單：只讀索引不讀 .DAT 是不夠的 —— 使用者要看見中文釋義才知道
  * 是不是自己要的那個字，所以每一列還是得抓一次 .DAT。一頁最多 8 列，
  * 每列一次隨機讀，這是「邊打邊查」真正的 SD 成本。 */
@@ -36,7 +55,7 @@ static void refresh_cands(app *a)
     if (limit > APP_MAX_CANDS)
         limit = APP_MAX_CANDS;
 
-    klen = dict_normalize_ec(a->typed, key, sizeof(key));
+    klen = norm_key(a, a->typed, key, sizeof(key));
     if (!klen)
         return;
     n = dict_prefix(a->d, key, klen, hits, limit, 128, 1);
@@ -107,7 +126,7 @@ static void show_record(app *a, const dict_record *rec_in)
 static int show_word(app *a, const char *word)
 {
     uint8_t key[DICT_MAX_KEY];
-    uint32_t klen = dict_normalize_ec(word, key, sizeof(key));
+    uint32_t klen = norm_key(a, word, key, sizeof(key));
     dict_record rec;
 
     if (!klen)
@@ -146,10 +165,12 @@ static int show_at(app *a, uint32_t pos)
     return 1;
 }
 
-void app_init(app *a, dict *d, font *f, const ui_target *t)
+void app_init(app *a, dict *ec, dict *ce, font *f, const ui_target *t)
 {
     memset(a, 0, sizeof(*a));
-    a->d = d;
+    a->ec = ec;
+    a->ce = ce;
+    a->d = ec;
     a->f = f;
     a->t = t;
     a->state = APP_TYPING;
@@ -187,6 +208,133 @@ static void speak_typing(app *a)
         a->speak(a->speak_ctx, 0, 0, 0,
                  a->cand_n && a->sel < a->cand_n ? a->cand_word[a->sel]
                                                  : a->typed);
+}
+
+/* 注音：重新查一次候選字。打到一半（還湊不成音節）就查不到，候選是空的
+ * —— 那是正常狀態，不是錯誤。 */
+static void ime_refresh(app *a)
+{
+    a->ime_cands[0] = 0;
+    a->ime_n = 0;
+    if (!a->ime_len)
+        return;
+    if (ime_query(a->ime_keys, a->ime_cands, (int)sizeof(a->ime_cands)) > 0) {
+        char ch[8];
+        while (a->ime_n < APP_MAX_CANDS &&
+               ime_nth(a->ime_cands, a->ime_n, ch, sizeof(ch)) > 0)
+            a->ime_n++;
+    }
+}
+
+/* 候選清單在漢英模式下有兩種內容：注音打到一半時是**候選字**，
+ * 沒有待選注音時是**字典的前綴候選**。兩者共用同一組 ui_cand。 */
+static void fill_ime_cands(app *a)
+{
+    int i;
+    for (i = 0; i < a->ime_n; i++) {
+        char ch[8];
+        int n = ime_nth(a->ime_cands, i, ch, sizeof(ch));
+        if (n <= 0)
+            break;
+        memcpy(a->cand_word[i], ch, (size_t)n + 1);
+        a->cands[i].word = a->cand_word[i];
+        a->cand_trans[i][0] = 0;
+        a->cands[i].trans = a->cand_trans[i];
+        a->cand_off[i] = 0;
+        a->cand_len[i] = 0;
+    }
+    a->cand_n = i;
+    if (a->sel >= a->cand_n)
+        a->sel = a->cand_n ? a->cand_n - 1 : 0;
+}
+
+/* 選定一個字：接到查詢字串後面，注音緩衝清空，再查一次字典前綴。 */
+static void ime_commit(app *a, int which)
+{
+    char ch[8];
+    int n = ime_nth(a->ime_cands, which, ch, sizeof(ch));
+
+    if (n <= 0)
+        return;
+    if (a->typed_len + n < APP_MAX_TYPED) {
+        memcpy(a->typed + a->typed_len, ch, (size_t)n);
+        a->typed_len += n;
+        a->typed[a->typed_len] = 0;
+    }
+    a->ime_len = 0;
+    a->ime_keys[0] = 0;
+    a->ime_cands[0] = 0;
+    a->ime_n = 0;
+    a->sel = 0;
+    refresh_cands(a);
+}
+
+static void ime_key(app *a, const key_event *ev)
+{
+    switch (ev->code) {
+    case KEY_BS:
+        /* 先刪還沒選字的注音，注音空了才刪已經選定的字 —— 反過來的話
+         * 使用者會發現自己剛打的注音消失了，卻是前面的字被吃掉。 */
+        if (a->ime_len) {
+            a->ime_keys[--a->ime_len] = 0;
+            ime_refresh(a);
+        } else if (a->typed_len) {
+            /* UTF-8：退一個完整的字，不是一個 byte */
+            do {
+                a->typed_len--;
+            } while (a->typed_len > 0 &&
+                     ((unsigned char)a->typed[a->typed_len] & 0xC0) == 0x80);
+            a->typed[a->typed_len] = 0;
+            a->sel = 0;
+            refresh_cands(a);
+        }
+        break;
+    case KEY_ESC:
+        a->ime_len = 0;
+        a->ime_keys[0] = 0;
+        a->ime_cands[0] = 0;
+        a->ime_n = 0;
+        a->typed_len = 0;
+        a->typed[0] = 0;
+        a->sel = 0;
+        a->cand_n = 0;
+        break;
+    case KEY_UP:
+        if (a->sel > 0)
+            a->sel--;
+        break;
+    case KEY_DOWN:
+        if (a->sel + 1 < a->cand_n)
+            a->sel++;
+        break;
+    case KEY_ENTER:
+        if (a->ime_n)
+            ime_commit(a, a->sel);          /* 有候選字 -> 選字 */
+        else if (a->cand_n && a->sel < a->cand_n)
+            show_word(a, a->cand_word[a->sel]);
+        else if (a->typed_len)
+            show_word(a, a->typed);
+        break;
+    case KEY_F1:
+        speak_typing(a);
+        break;
+    default:
+        if (ev->code >= 0x20 && ev->code < 0x7F) {
+            if (!ime_key_bopo((char)ev->code))
+                break;                      /* 不是注音鍵就吃掉 */
+            if (a->ime_len < IME_MAX_KEYS) {
+                a->ime_keys[a->ime_len++] = (char)ev->code;
+                a->ime_keys[a->ime_len] = 0;
+                a->sel = 0;
+                ime_refresh(a);
+            }
+        }
+        break;
+    }
+    if (a->ime_n)
+        fill_ime_cands(a);
+    else if (a->state == APP_TYPING && !a->ime_len)
+        refresh_cands(a);
 }
 
 static void typing_key(app *a, const key_event *ev)
@@ -276,12 +424,61 @@ static void result_key(app *a, const key_event *ev)
     }
 }
 
+/* Fn+2：英漢 <-> 漢英。切換會把輸入清掉 —— 英文字串在漢英模式下沒有意義，
+ * 留著只會讓下一次查詢莫名其妙。 */
+static void toggle_dir(app *a)
+{
+    if (!a->ce)
+        return;                 /* SD 卡上沒有漢英資料 */
+    a->dir = (a->dir == APP_EC) ? APP_CE : APP_EC;
+    a->d = (a->dir == APP_EC) ? a->ec : a->ce;
+    a->typed_len = 0;
+    a->typed[0] = 0;
+    a->ime_len = 0;
+    a->ime_keys[0] = 0;
+    a->ime_cands[0] = 0;
+    a->ime_n = 0;
+    a->cand_n = 0;
+    a->sel = 0;
+    a->has_pos = 0;
+    a->state = APP_TYPING;
+}
+
+const char *app_bar(const app *a)
+{
+    if (a->state == APP_RESULT)
+        return a->dir == APP_EC ? "英漢  Fn+1 發音  Fn+2 切換"
+                                : "漢英  Fn+1 發音  Fn+2 切換";
+    if (a->dir == APP_CE)
+        return a->ime_n ? "注音   ENTER 選字" : "注音   Fn+2 切回英漢";
+    return "常用詞優先   ENTER 查詢";
+}
+
+const char *app_status(const app *a)
+{
+    /* 注音模式下不顯示大小寫 —— 那時候字母鍵是注音，大寫沒有意義。
+     * 發音中在後面加一個「音」，這是唯一會在使用者沒按鍵時變動的狀態。 */
+    if (a->dir == APP_CE)
+        return a->speaking ? "注 音" : "注";
+    if (a->caps)
+        return a->speaking ? "英大 音" : "英大";
+    return a->speaking ? "英 音" : "英";
+}
+
 void app_key(app *a, const key_event *ev)
 {
     if (!ev->code)
         return;
+    /* 大小寫狀態跟著每一次按鍵更新 —— CapsLock 本身不產生事件（它是
+     * 修飾鍵），但任何一次按鍵事件都帶著當下的修飾鍵狀態。 */
+    a->caps = (ev->mods & KEY_M_CAPS) ? 1 : 0;
+    if (ev->code == KEY_F2) {
+        toggle_dir(a);
+        a->dirty = 1;
+        return;
+    }
     if (a->state == APP_TYPING)
-        typing_key(a, ev);
+        (a->dir == APP_CE) ? ime_key(a, ev) : typing_key(a, ev);
     else
         result_key(a, ev);
     a->dirty = 1;
@@ -291,11 +488,27 @@ int app_render(app *a)
 {
     if (!a->dirty)
         return 0;
-    if (a->state == APP_TYPING)
-        ui_render_typing(a->t, a->f, a->typed, a->cands, a->cand_n,
-                         a->cand_n ? a->sel : -1);
-    else
-        ui_render_result(a->t, a->f, &a->entry, a->scroll);
+    if (a->state == APP_TYPING) {
+        char line[APP_MAX_TYPED + IME_MAX_BOPO + 2];
+        const char *shown = a->typed;
+        if (a->dir == APP_CE && a->ime_len) {
+            /* 已選定的字 + 還沒選字的注音，接成一行 —— 使用者看到的是
+             * 「你ㄏㄠˇ」，跟真的輸入法一樣。 */
+            int n = a->typed_len;
+            if (n > (int)sizeof(line) - IME_MAX_BOPO - 1)
+                n = (int)sizeof(line) - IME_MAX_BOPO - 1;
+            memcpy(line, a->typed, (size_t)n);
+            n += ime_bopomofo(a->ime_keys, line + n,
+                              (int)sizeof(line) - n);
+            line[n] = 0;
+            shown = line;
+        }
+        ui_render_typing(a->t, a->f, shown, a->cands, a->cand_n,
+                         a->cand_n ? a->sel : -1, app_bar(a), app_status(a));
+    } else {
+        ui_render_result(a->t, a->f, &a->entry, a->scroll, app_bar(a),
+                         app_status(a));
+    }
     a->dirty = 0;
     return 1;
 }

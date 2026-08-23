@@ -56,6 +56,16 @@ def is_wide(cp):
     return any(lo <= cp <= hi for lo, hi in CJK_RANGES)
 
 
+# 一定要收的字：注音符號與聲調符號。
+#
+# 它們**不在字典內文裡**（字典存的是拼音字串，不是注音），所以只靠掃 .DAT
+# 會漏 —— 而漏掉不會有任何症狀，直到使用者打到那個音，螢幕上出現一個空框。
+# 實測 ㄠ 就是這樣缺的（ㄋㄧ 有、ㄠ 沒有，因為前兩個剛好出現在某些詞條裡）。
+ALWAYS = ([cp for cp in range(0x3105, 0x3130)] +      # ㄅ..ㄩ
+          [0x02CA, 0x02C7, 0x02CB, 0x02D9] +          # ˊ ˇ ˋ ˙
+          [0x3000])                                    # 全形空白
+
+
 def scan_needed(dict_dir):
     """掃 .DAT 找出實際用到的字，分成寬（漢字）與窄（其餘）兩組。
 
@@ -76,6 +86,8 @@ def scan_needed(dict_dir):
                 wide.add(cp)
             elif 0x20 <= cp < 0x2E80:
                 narrow.add(cp)
+    for cp in ALWAYS:
+        (wide if is_wide(cp) else narrow).add(cp)
     return sorted(wide), sorted(narrow)
 
 

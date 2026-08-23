@@ -34,6 +34,7 @@ extern "C" {
 #include "src/rd_fbuf.h"
 #include "src/rd_font.h"
 #include "src/rd_keys.h"
+#include "src/rd_ime.h"
 #include "src/rd_lts.h"
 #include "src/rd_speech.h"
 #include "src/rd_ui.h"
@@ -79,6 +80,7 @@ static TFT_DMA tft(PIN_DISPLAY_CS, PIN_DISPLAY_DC, PIN_DISPLAY_RST,
 struct FileCtx { File f; };
 
 static FileCtx g_ec_idx, g_ec_dat, g_ecc_idx, g_font_file;
+static FileCtx g_ce_idx, g_ce_dat;
 
 static int sd_read_at(void *ctx, uint32_t off, uint32_t len, uint8_t *out)
 {
@@ -161,24 +163,14 @@ static void scanMatrix(uint8_t rows[8])
 static fbuf g_fb;
 static uint8_t g_line[2][FB_W * 2];
 
-static void blit()
-{
-    tft.startFrame(0, 0, UI_W - 1, UI_H - 1);
-    for (int y = 0; y < UI_H; y++) {
-        if ((y & 31) == 0)
-            audio_mixer_step();      // 整張畫面約 20ms，中途也要餵
-        uint8_t *buf = g_line[y & 1];
-        fbuf_line_rgb565(&g_fb, y, buf);
-        tft.waitTransferDone();
-        tft.sendScanlineAsync((const uint16_t *)buf, FB_W);
-    }
-    tft.waitTransferDone();
-    digitalWrite(PIN_DISPLAY_CS, HIGH);
-}
-
-// ============================================================================
+// 這幾個的定義在下面（順序是為了讓宣告貼近它們所屬的段落），
+// 但 on_speak() 與 refresh_status() 在那之前就要用到。
+static app g_app;
+static void refresh_status();
 
 static dict g_dict;
+static dict g_dict_ce;
+static bool g_has_ce = false;
 static font g_font_dev;
 
 // 發音用的三塊緩衝。整段唸完的波形先收在 g_pcm，再一次交給 DMA 播 ——
@@ -258,12 +250,53 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
         return;
     }
     g_speak_src = audio_play_once(g_pcm, g_pcm_n);
+    g_app.speaking = 1;
+    refresh_status();
 }
 // 40KB：兩張碼位表 + 窄字前進寬度 + ASCII 字模，實測要 39,123 bytes。
 static uint8_t g_font_cache[40 * 1024];
 static ui_target g_target;
-static app g_app;
 static keys g_keys;
+
+// 只送某幾條掃描線。發音狀態變化時用它 —— 整頁重畫要從 SD 讀上百次字模、
+// 一次一百多毫秒，音訊緩衝區會來不及填而斷音（那正是「aaaaple」的成因）。
+static void blit_rows(int y0, int h)
+{
+    tft.startFrame(0, y0, UI_W - 1, y0 + h - 1);
+    for (int y = y0; y < y0 + h; y++) {
+        uint8_t *buf = g_line[y & 1];
+        fbuf_line_rgb565(&g_fb, y, buf);
+        tft.waitTransferDone();
+        tft.sendScanlineAsync((const uint16_t *)buf, FB_W);
+    }
+    tft.waitTransferDone();
+    digitalWrite(PIN_DISPLAY_CS, HIGH);
+}
+
+// 右下角的狀態格單獨重畫（模式、大小寫、發音中）。
+static void refresh_status()
+{
+    ui_draw_status(&g_target, &g_font_dev, app_status(&g_app));
+    blit_rows(UI_H - UI_LINE_H, UI_LINE_H);
+}
+
+static void blit()
+{
+    tft.startFrame(0, 0, UI_W - 1, UI_H - 1);
+    for (int y = 0; y < UI_H; y++) {
+        if ((y & 31) == 0)
+            audio_mixer_step();      // 整張畫面約 20ms，中途也要餵
+        uint8_t *buf = g_line[y & 1];
+        fbuf_line_rgb565(&g_fb, y, buf);
+        tft.waitTransferDone();
+        tft.sendScanlineAsync((const uint16_t *)buf, FB_W);
+    }
+    tft.waitTransferDone();
+    digitalWrite(PIN_DISPLAY_CS, HIGH);
+}
+
+// ============================================================================
+
 
 // 開機或出錯時直接畫在螢幕上：這台機器沒有序列埠可看的時候仍要說得出話。
 static void banner(const char *msg)
@@ -272,7 +305,7 @@ static void banner(const char *msg)
     memset(&e, 0, sizeof(e));
     e.headword = "RetroDict";
     e.trans_zh = msg;
-    ui_render_result(&g_target, &g_font_dev, &e, 0);
+    ui_render_result(&g_target, &g_font_dev, &e, 0, "RetroDict", NULL);
     blit();
 }
 
@@ -344,6 +377,9 @@ static bool sd_begin()
     g_ec_dat.f  = SD.open("/DICT/EC.DAT",  FILE_READ);
     g_ecc_idx.f = SD.open("/DICT/ECC.IDX", FILE_READ);
     g_font_file.f = SD.open("/DICT/FONT.BIN", FILE_READ);
+    // 漢英是選用的：沒有 CE.* 就只是 Fn+2 不作用，其餘照常。
+    g_ce_idx.f = SD.open("/DICT/CE.IDX", FILE_READ);
+    g_ce_dat.f = SD.open("/DICT/CE.DAT", FILE_READ);
     return g_ec_idx.f && g_ec_dat.f && g_font_file.f;
 }
 
@@ -398,8 +434,20 @@ void setup()
 
     audio_init(PIN_SPEAKER, SYN_SR);
 
+    if (g_ce_idx.f && g_ce_dat.f) {
+        memset(&g_dict_ce, 0, sizeof(g_dict_ce));
+        if (dict_index_open(&g_dict_ce.main, sd_read_sector, &g_ce_idx)
+            == DICT_OK) {
+            g_dict_ce.read_dat = sd_read_at;
+            g_dict_ce.dat_ctx = &g_ce_dat;
+            g_has_ce = true;
+        }
+    }
+    Serial.printf("dict: EC ok, CE %s\n", g_has_ce ? "ok" : "missing");
+
     keys_init(&g_keys);
-    app_init(&g_app, &g_dict, &g_font_dev, &g_target);
+    app_init(&g_app, &g_dict, g_has_ce ? &g_dict_ce : NULL, &g_font_dev,
+             &g_target);
     g_app.speak = on_speak;
     app_render(&g_app);
     blit();
@@ -425,6 +473,14 @@ void loop()
     // 緩衝區只有 1024 個樣本（16kHz 下 64ms），所以每一圈都要餵。查詞或
     // 重畫畫面會佔掉幾十毫秒，這也是為什麼發音時不要同時做那些事。
     audio_mixer_step();
+
+    // 播完了就把「音」收起來。只重畫右下角那一格，不整頁重畫。
+    if (g_app.speaking && g_speak_src >= 0 &&
+        !audio_is_source_active(g_speak_src)) {
+        g_app.speaking = 0;
+        g_speak_src = -1;
+        refresh_status();
+    }
 
     if (app_render(&g_app))
         blit();

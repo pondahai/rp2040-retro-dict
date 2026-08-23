@@ -173,7 +173,8 @@ int main(int argc, char **argv)
         e.phonetic = field(&rec, DICT_T_PHONETIC, ph, sizeof(ph));
         e.trans_zh = field(&rec, DICT_T_TRANS_ZH, zh, sizeof(zh));
         e.def_en   = field(&rec, DICT_T_DEF_EN, en, sizeof(en));
-        ui_render_result(&t, &fnt, &e, extra);
+        ui_render_result(&t, &fnt, &e, extra, "英漢  Fn+1 發音  Fn+2 切換",
+                         "英");
     } else if (strcmp(mode, "typing") == 0) {
         dict_entry hits[8];
         ui_cand rows[8];
@@ -209,7 +210,8 @@ int main(int argc, char **argv)
                 }
             }
         }
-        ui_render_typing(&t, &fnt, arg, rows, n, extra);
+        ui_render_typing(&t, &fnt, arg, rows, n, extra,
+                         "常用詞優先   ENTER 查詢", "英");
     } else {
         fprintf(stderr, "不認得的模式 %s\n", mode);
         return 1;

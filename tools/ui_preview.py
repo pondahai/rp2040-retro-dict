@@ -113,7 +113,26 @@ def body_lines(font, fields):
     return out
 
 
-def render_result(font, word, scroll=0):
+def text_width(font, text):
+    w = 0
+    for ch in text:
+        g = font.glyph(ord(ch))
+        w += g[0] if g else font.cjk_w
+    return w
+
+
+def draw_status(img, font, status):
+    """右下角的狀態格，靠右對齊。"""
+    if not status:
+        return
+    d = ImageDraw.Draw(img)
+    x = max(0, W - 3 - text_width(font, status))
+    d.rectangle([x - 4, H - LINE_H, W - 1, H - 1], fill=BAR)
+    draw_text(img, font, x, H - LINE_H + 1, status, BAR_RAMP)
+
+
+def render_result(font, word, scroll=0,
+                  bar="英漢  Fn+1 發音  Fn+2 切換", status=None):
     fields, _cands = fetch(word)
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
@@ -133,13 +152,13 @@ def render_result(font, word, scroll=0):
         y += LINE_H
 
     d.rectangle([0, H - LINE_H, W - 1, H - 1], fill=BAR)
-    draw_text(img, font, 3, H - LINE_H + 1,
-              "英漢  Fn+1 發音  Fn+2 切換",
-              BAR_RAMP)
+    draw_text(img, font, 3, H - LINE_H + 1, bar, BAR_RAMP)
+    draw_status(img, font, status)
     return img
 
 
-def render_typing(font, typed, sel=0):
+def render_typing(font, typed, sel=0,
+                  bar="常用詞優先   ENTER 查詢", status=None):
     """邊打邊查：輸入框 + 常用詞優先的候選清單（FORMAT.md §8 模式 B）。"""
     _f, cands = fetch("apple")
     d0 = C.Dictionary(os.path.join(DICT_DIR, "EC.IDX"),
@@ -171,7 +190,8 @@ def render_typing(font, typed, sel=0):
         y += LINE_H
 
     d.rectangle([0, H - LINE_H, W - 1, H - 1], fill=BAR)
-    draw_text(img, font, 3, H - LINE_H + 1, "常用詞優先   ENTER 查詢", BAR_RAMP)
+    draw_text(img, font, 3, H - LINE_H + 1, bar, BAR_RAMP)
+    draw_status(img, font, status)
     return img
 
 

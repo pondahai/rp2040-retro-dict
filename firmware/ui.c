@@ -57,6 +57,30 @@ int ui_draw_text(const ui_target *t, font *f, int x, int top,
     return x;
 }
 
+int ui_text_width(font *f, const char *utf8)
+{
+    int w = 0, n;
+    uint32_t cp;
+    if (!utf8)
+        return 0;
+    while ((n = font_utf8_next(utf8, &cp)) > 0) {
+        w += font_advance(f, cp);
+        utf8 += n;
+    }
+    return w;
+}
+
+void ui_draw_status(const ui_target *t, font *f, const char *status)
+{
+    int w = ui_text_width(f, status);
+    int x = UI_W - 3 - w;
+    if (x < 0)
+        x = 0;
+    /* 先把整格塗回列底色再畫 —— 字數變少時（「英大」變「英」）要蓋掉舊的。 */
+    t->fill(t->ctx, x - 4, UI_H - UI_LINE_H, UI_W - (x - 4), UI_LINE_H, UI_BAR);
+    ui_draw_text(t, f, x, UI_H - UI_LINE_H + 1, status, UI_BAR_RAMP);
+}
+
 int ui_wrap_next(font *f, const char *utf8, int max_w)
 {
     int used = 0, w = 0;
@@ -177,7 +201,7 @@ static int body_emit(void *ctx, const char *line, int len,
 }
 
 void ui_render_result(const ui_target *t, font *f, const ui_entry *e,
-                      int scroll)
+                      int scroll, const char *bar, const char *status)
 {
     body_ctx b;
     int x;
@@ -199,15 +223,18 @@ void ui_render_result(const ui_target *t, font *f, const ui_entry *e,
     scan_body(f, e, body_emit, &b);
 
     t->fill(t->ctx, 0, UI_H - UI_LINE_H, UI_W, UI_LINE_H, UI_BAR);
-    /* 這台機器沒有獨立的 F 鍵，F1~F10 是 Fn + 數字（keys.c 的 fn_translate）。
-     * 畫面上就照實寫，不要寫「F1」讓人去按一顆不存在的鍵。 */
-    ui_draw_text(t, f, 3, UI_H - UI_LINE_H + 1,
-                 "英漢  Fn+1 發音  Fn+2 切換",
-                 UI_BAR_RAMP);
+    if (status)
+        ui_draw_status(t, f, status);
+    /* 狀態列的字由呼叫端給 —— 英漢與漢英要顯示不同的東西，而這一層
+     * 不知道現在是哪個方向（它連字典都沒有）。
+     * 這台機器沒有獨立的 F 鍵，F1~F10 是 Fn + 數字（keys.c 的 fn_translate），
+     * 所以呼叫端寫的也該是「Fn+1」而不是「F1」。 */
+    ui_draw_text(t, f, 3, UI_H - UI_LINE_H + 1, bar, UI_BAR_RAMP);
 }
 
 void ui_render_typing(const ui_target *t, font *f, const char *typed,
-                      const ui_cand *rows, int n, int sel)
+                      const ui_cand *rows, int n, int sel, const char *bar,
+                      const char *status)
 {
     int i, x, y;
 
@@ -247,7 +274,7 @@ void ui_render_typing(const ui_target *t, font *f, const char *typed,
     }
 
     t->fill(t->ctx, 0, UI_H - UI_LINE_H, UI_W, UI_LINE_H, UI_BAR);
-    ui_draw_text(t, f, 3, UI_H - UI_LINE_H + 1,
-                 "\xe5\xb8\xb8\xe7\x94\xa8\xe8\xa9\x9e\xe5\x84\xaa\xe5\x85\x88"
-                 "   ENTER \xe6\x9f\xa5\xe8\xa9\xa2", UI_BAR_RAMP);
+    ui_draw_text(t, f, 3, UI_H - UI_LINE_H + 1, bar, UI_BAR_RAMP);
+    if (status)
+        ui_draw_status(t, f, status);
 }

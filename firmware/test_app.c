@@ -258,9 +258,11 @@ static void snapshot(const char *prefix)
             fwrite(rgb, 1, 3, f);
         }
     fclose(f);
-    printf("  %s  %s  typed=%s  cand=%d sel=%d  scroll=%d/%d  %s\n", path,
+    printf("  %s  %s%s  typed=%s%s  cand=%d sel=%d  scroll=%d/%d  %s\n", path,
            APP.state == APP_TYPING ? "TYPING" : "RESULT",
-           APP.typed, APP.cand_n, APP.sel, APP.scroll, APP.body_lines,
+           APP.dir == APP_CE ? "/CE" : "",
+           APP.typed, APP.ime_len ? APP.ime_keys : "",
+           APP.cand_n, APP.sel, APP.scroll, APP.body_lines,
            APP.state == APP_RESULT && APP.entry.headword
                ? APP.entry.headword : "");
 }
@@ -270,7 +272,7 @@ static const struct { const char *name; uint8_t code; } TOKENS[] = {
     { "TAB", KEY_TAB }, { "DEL", KEY_DEL },
     { "UP", KEY_UP }, { "DOWN", KEY_DOWN }, { "LEFT", KEY_LEFT },
     { "RIGHT", KEY_RIGHT }, { "PGUP", KEY_PGUP }, { "PGDN", KEY_PGDN },
-    { "F1", KEY_F1 }, { 0, 0 }
+    { "F1", KEY_F1 }, { "F2", KEY_F2 }, { "F3", KEY_F3 }, { 0, 0 }
 };
 
 static void run_script(const char *script, const char *prefix)
@@ -325,8 +327,9 @@ int main(int argc, char **argv)
 {
     const char *dir, *mode;
     FILE *fidx, *fdat, *fcommon, *ffont;
-    static file_ctx cidx, cdat, ccommon, cfont;
-    static dict D;
+    FILE *fceidx, *fcedat;
+    static file_ctx cidx, cdat, ccommon, cfont, cceidx, ccedat;
+    static dict D, CE;
     static font FNT;
     static ui_target T;
     int rc;
@@ -362,6 +365,26 @@ int main(int argc, char **argv)
     D.read_dat = file_read_at;
     D.dat_ctx = &cdat;
 
+    /* 漢英字典是選用的：SD 卡上沒有 CE.* 時 Fn+2 不作用，其餘照常。 */
+    {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/CE.IDX", dir);
+        fceidx = fopen(path, "rb");
+        snprintf(path, sizeof(path), "%s/CE.DAT", dir);
+        fcedat = fopen(path, "rb");
+    }
+    if (fceidx && fcedat) {
+        cceidx.f = fceidx;
+        ccedat.f = fcedat;
+        memset(&CE, 0, sizeof(CE));
+        if (dict_index_open(&CE.main, file_read_sector, &cceidx) == DICT_OK) {
+            CE.read_dat = file_read_at;
+            CE.dat_ctx = &ccedat;
+        } else {
+            fceidx = NULL;
+        }
+    }
+
     if ((rc = font_open(&FNT, file_read_at, &cfont)) != FONT_OK) {
         fprintf(stderr, "FONT.BIN 開檔失敗 %d\n", rc);
         return 2;
@@ -382,7 +405,7 @@ int main(int argc, char **argv)
     fbuf_init(&FB);
     fbuf_target(&FB, &T);
     keys_init(&KEYS);
-    app_init(&APP, &D, &FNT, &T);
+    app_init(&APP, &D, (fceidx && fcedat) ? &CE : NULL, &FNT, &T);
     APP.speak = on_speak;
 
     run_script(argv[3], argv[4]);

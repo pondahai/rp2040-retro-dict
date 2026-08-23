@@ -94,14 +94,16 @@ def main():
         except RuntimeError as e:
             print("  skip  %s（%s）" % (name, e))
             continue
-        fails += diff(P.render_result(font, w, scroll), Image.open(ppm), name)
+        fails += diff(P.render_result(font, w, scroll, status="英"),
+                      Image.open(ppm), name)
 
     print("邊打邊查畫面：")
     for t, sel in TYPING_PREFIXES:
         name = "typing_%s_%d" % (t, sel)
         ppm = os.path.join(OUT, "c_%s.ppm" % name)
         run_c("typing", t, ppm, sel)
-        fails += diff(P.render_typing(font, t, sel), Image.open(ppm), name)
+        fails += diff(P.render_typing(font, t, sel, status="英"),
+                      Image.open(ppm), name)
 
     print()
     print("全部一致" if not fails else "%d 張畫面不同" % fails)
