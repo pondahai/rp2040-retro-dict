@@ -102,12 +102,22 @@ def _dict_word(s):
 
 @case("11_en_vowels", "英文母音：beat bit bet bat father but boot bird。分不開就白搭")
 def _en_vowels(s):
+    # 一個字一個項目。第一版把 father 與 but 寫進同一個字串，結果黏成一句
+    # 念出來，but 埋在裡面聽不出來 —— 是測試檔的 bug，不是合成器的。
+    words = [
+        ("beat", "bi:t"),
+        ("bit", "bit"),
+        ("bet", "bet"),
+        ("bat", "b" + chr(0xE6) + "t"),
+        ("father", "'f" + chr(0x251) + ":" + chr(0xF0) + chr(0x259)),
+        ("but", "b" + chr(0x28C) + "t"),
+        ("boot", "bu:t"),
+        ("bird", "b" + chr(0x259) + ":d"),
+    ]
     out = []
-    for ipa in ("bi:t", "bit", "bet", "b" + chr(0xE6) + "t",
-                "'f" + chr(0x251) + ":" + chr(0x259) + "', b" + chr(0x28C) + "t",
-                "bu:t", "b" + chr(0x259) + ":d"):
+    for _w, ipa in words:
         out += english.synth(phoneme.parse(ipa))
-        out += [0.0] * int(voice.SR * 0.12)
+        out += [0.0] * int(voice.SR * 0.14)
     return out
 
 
@@ -306,6 +316,39 @@ def fricative_checks():
     return ok
 
 
+def english_checks():
+    """英文母音必須彼此分得開。
+
+    使用者聽判抓到 but 聽不出來。兩個原因：測試檔把 father 與 but 寫進同一個
+    字串（黏成一句），以及真的缺了**長短母音**的區別 —— but(ʌ) 與 father(ɑ:)
+    的 F1 只差 90Hz、F2 幾乎相同，英文本來就主要靠長度分辨。
+    """
+    print()
+    print("英文母音檢查")
+    ok = True
+    durs = {}
+    for w, ipa in (("bit", "bit"), ("beat", "bi:t"),
+                   ("but", "b" + chr(0x28C) + "t"),
+                   ("father", "'f" + chr(0x251) + ":" + chr(0xF0) + chr(0x259))):
+        durs[w] = len(english.synth(phoneme.parse(ipa))) / voice.SR
+    print("  " + "  ".join("%s %.2fs" % (w, d) for w, d in durs.items()))
+
+    def want(cond, what):
+        nonlocal ok
+        print(("  PASS  " if cond else "  FAIL  ") + what)
+        ok = ok and cond
+
+    want(durs["beat"] > durs["bit"] * 1.15, "beat 明顯比 bit 長（長短母音）")
+    want(durs["father"] > durs["but"] * 1.4, "father 明顯比 but 長")
+    ah, aa = english.VOWELS["ah"], english.VOWELS["aa"]
+    want(abs(ah[1] - aa[1]) > 250,
+         "but 與 father 的 F2 分得開（相差 %d Hz）" % abs(ah[1] - aa[1]))
+    # 每個母音都要有自己的位置，不能兩個完全一樣
+    seen = set(english.VOWELS.values())
+    want(len(seen) == len(english.VOWELS), "沒有兩個母音共用同一組共振峰")
+    return ok
+
+
 def loudness_checks():
     """音節之間的響度必須接近。
 
@@ -357,6 +400,7 @@ def run():
     ok = spectral_checks() and ok
     ok = loudness_checks() and ok
     ok = fricative_checks() and ok
+    ok = english_checks() and ok
     print()
     print("客觀部分：" + ("全部通過" if ok else "有項目失敗"))
     print()

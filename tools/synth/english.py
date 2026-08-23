@@ -22,7 +22,7 @@ VOWELS = {
     "eh": (550, 1800, 2500),   # bet
     "ae": (700, 1700, 2400),   # bat
     "aa": (750, 1100, 2500),   # father
-    "ah": (620, 1200, 2500),   # but
+    "ah": (680, 1450, 2500),   # but（ʌ 偏央，F2 要比 ɑ 高，否則與 father 混）
     "ao": (570,  850, 2500),   # bought
     "uh": (450, 1100, 2350),   # book
     "uw": (320,  900, 2200),   # boot
@@ -59,6 +59,11 @@ _ARTIC = {
     "l": (350, 1100, 2600), "r": (400, 1300, 1500),
     "y": (300, 2200, 3000), "w": (330,  800, 2200),
 }
+
+# 長母音。英文的 beat/bit、boot/book、father/but 主要靠**長度**分辨，
+# 只靠共振峰分不開 —— 實測 but 與 father 的 F1 只差 90Hz、F2 幾乎相同。
+LONG_VOWELS = {"iy", "aa", "ao", "uw", "er"}
+LONG_FACTOR = 1.5
 
 # 時長（毫秒）。重音會再乘上係數。
 DUR_VOWEL = 120
@@ -101,6 +106,8 @@ def plan(phones, rate=1.0):
             seen_v += 1
         elif ph in VOWELS:
             dur = DUR_VOWEL * STRESS_DUR.get(stress, 1.0) * rate
+            if ph in LONG_VOWELS:
+                dur *= LONG_FACTOR
             decl = 1.0 - 0.22 * (seen_v / max(1, n_vowels - 1)) if n_vowels > 1 else 1.0
             segs.append(_seg("vowel", voice._ms(dur), [VOWELS[ph]],
                              voice.VOWEL_BW, True,
