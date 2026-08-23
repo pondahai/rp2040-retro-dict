@@ -428,8 +428,13 @@ static void result_key(app *a, const key_event *ev)
  * 留著只會讓下一次查詢莫名其妙。 */
 static void toggle_dir(app *a)
 {
-    if (!a->ce)
-        return;                 /* SD 卡上沒有漢英資料 */
+    if (!a->ce) {
+        /* 沉默與壞掉長得一模一樣 —— 按了沒反應時，使用者無從知道是
+         * 「沒裝資料」還是「這顆鍵壞了」。所以要說出來。 */
+        a->notice = 1;
+        return;
+    }
+    a->notice = 0;
     a->dir = (a->dir == APP_EC) ? APP_CE : APP_EC;
     a->d = (a->dir == APP_EC) ? a->ec : a->ce;
     a->typed_len = 0;
@@ -446,6 +451,8 @@ static void toggle_dir(app *a)
 
 const char *app_bar(const app *a)
 {
+    if (a->notice)
+        return "沒有漢英資料：SD 缺 CE.IDX";   /* 261px 以內，不會壓到狀態格 */
     if (a->state == APP_RESULT)
         return a->dir == APP_EC ? "英漢  Fn+1 發音  Fn+2 切換"
                                 : "漢英  Fn+1 發音  Fn+2 切換";
@@ -472,6 +479,8 @@ void app_key(app *a, const key_event *ev)
     /* 大小寫狀態跟著每一次按鍵更新 —— CapsLock 本身不產生事件（它是
      * 修飾鍵），但任何一次按鍵事件都帶著當下的修飾鍵狀態。 */
     a->caps = (ev->mods & KEY_M_CAPS) ? 1 : 0;
+    if (ev->code != KEY_F2)
+        a->notice = 0;          /* 按了別的鍵就把提示收起來 */
     if (ev->code == KEY_F2) {
         toggle_dir(a);
         a->dirty = 1;

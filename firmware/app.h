@@ -79,6 +79,7 @@ typedef struct {
      * speaking 由板子端給（只有它知道 DMA 播完了沒）。 */
     int caps;
     int speaking;
+    int notice;       /* 有話要說（例如按了 Fn+2 但 SD 上沒有漢英資料） */
 
     /* Fn+1 發音。這一層不合成、不碰喇叭 —— 只把「該唸什麼」交出去：
      * ids 是 .DAT 存好的音素／音節 id（FORMAT.md §4.2），沒有的話 ids 為 NULL，

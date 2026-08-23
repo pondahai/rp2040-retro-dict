@@ -16,6 +16,9 @@
 #define UI_W      320
 #define UI_H      240
 #define UI_LINE_H 19
+/* 右下角狀態格的寬度。固定，內容靠左 —— 見 ui_draw_status。
+ * 56 px 放得下「英大 音」（3 個全形 + 一個空白）。 */
+#define UI_STATUS_W 56
 
 typedef struct {
     void *ctx;

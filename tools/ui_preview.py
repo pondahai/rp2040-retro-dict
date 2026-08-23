@@ -121,14 +121,17 @@ def text_width(font, text):
     return w
 
 
+STATUS_W = 56
+
+
 def draw_status(img, font, status):
-    """右下角的狀態格，靠右對齊。"""
-    if not status:
-        return
+    """右下角的狀態格。**固定位置**，內容靠左 —— 靠右對齊的話「英」與「英大」
+    會讓整格左右跳，看起來像畫面在抖。"""
     d = ImageDraw.Draw(img)
-    x = max(0, W - 3 - text_width(font, status))
-    d.rectangle([x - 4, H - LINE_H, W - 1, H - 1], fill=BAR)
-    draw_text(img, font, x, H - LINE_H + 1, status, BAR_RAMP)
+    x = W - STATUS_W
+    d.rectangle([x, H - LINE_H, W - 1, H - 1], fill=BAR)
+    if status:
+        draw_text(img, font, x + 3, H - LINE_H + 1, status, BAR_RAMP)
 
 
 def render_result(font, word, scroll=0,

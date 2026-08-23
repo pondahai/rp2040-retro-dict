@@ -72,13 +72,16 @@ int ui_text_width(font *f, const char *utf8)
 
 void ui_draw_status(const ui_target *t, font *f, const char *status)
 {
-    int w = ui_text_width(f, status);
-    int x = UI_W - 3 - w;
-    if (x < 0)
-        x = 0;
-    /* 先把整格塗回列底色再畫 —— 字數變少時（「英大」變「英」）要蓋掉舊的。 */
-    t->fill(t->ctx, x - 4, UI_H - UI_LINE_H, UI_W - (x - 4), UI_LINE_H, UI_BAR);
-    ui_draw_text(t, f, x, UI_H - UI_LINE_H + 1, status, UI_BAR_RAMP);
+    int x = UI_W - UI_STATUS_W;
+
+    /* **固定位置**，不是靠右對齊 —— 內容會變長變短（英 / 英大 / 英大 音），
+     * 靠右對齊的話整格會左右跳，看起來像畫面在抖。格子固定、內容靠左，
+     * 位置就穩定了。
+     *
+     * 先把整格塗回列底色再畫：字數變少時要蓋掉上一次的殘留。 */
+    t->fill(t->ctx, x, UI_H - UI_LINE_H, UI_STATUS_W, UI_LINE_H, UI_BAR);
+    if (status)
+        ui_draw_text(t, f, x + 3, UI_H - UI_LINE_H + 1, status, UI_BAR_RAMP);
 }
 
 int ui_wrap_next(font *f, const char *utf8, int max_w)
@@ -223,8 +226,7 @@ void ui_render_result(const ui_target *t, font *f, const ui_entry *e,
     scan_body(f, e, body_emit, &b);
 
     t->fill(t->ctx, 0, UI_H - UI_LINE_H, UI_W, UI_LINE_H, UI_BAR);
-    if (status)
-        ui_draw_status(t, f, status);
+    ui_draw_status(t, f, status);
     /* 狀態列的字由呼叫端給 —— 英漢與漢英要顯示不同的東西，而這一層
      * 不知道現在是哪個方向（它連字典都沒有）。
      * 這台機器沒有獨立的 F 鍵，F1~F10 是 Fn + 數字（keys.c 的 fn_translate），
@@ -275,6 +277,5 @@ void ui_render_typing(const ui_target *t, font *f, const char *typed,
 
     t->fill(t->ctx, 0, UI_H - UI_LINE_H, UI_W, UI_LINE_H, UI_BAR);
     ui_draw_text(t, f, 3, UI_H - UI_LINE_H + 1, bar, UI_BAR_RAMP);
-    if (status)
-        ui_draw_status(t, f, status);
+    ui_draw_status(t, f, status);
 }
