@@ -169,7 +169,7 @@ CE 方向：UTF-8 原樣，僅去頭尾空白。**不做繁簡轉換**（v1 限�
 | 0x06 | POS | 兩者 | 詞性標記字串 |
 | 0x07 | EXCHANGE | EC | 詞形變化（ECDICT `exchange` 欄原樣） |
 | 0x08 | FREQ | EC | 6 bytes：u16 collins/bnc 名次 ×3，0 = 無 |
-| 0x09 | SYL_EN | EC | 英文發音音節 id 陣列（u16 ×n） |
+| 0x09 | SYL_EN | EC | 英文發音**音素** id 陣列（u16 ×n），id = 音素序號×4 + 重音(0無/1主/2次) |
 | 0x0A | SYL_ZH | 兩者 | 中文發音音節 id 陣列（u16 ×n） |
 | 0x0B | TRAD | CE | 繁體詞頭（CC-CEDICT 同時給繁簡時） |
 

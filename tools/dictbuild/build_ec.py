@@ -10,6 +10,11 @@ import sys
 from . import container as C
 from .normalize import normalize_ec
 
+try:
+    from synth import phoneme
+except ImportError:      # synth 不在路徑上時仍可只轉字典
+    phoneme = None
+
 csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
 
 
@@ -40,6 +45,7 @@ def _u16(v):
 
 def parse(path, stats=None, min_rank=None):
     stats = stats if stats is not None else {}
+    bad_ipa = stats.setdefault("unknown_ipa", {})
     with open(path, encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):
             word = (row.get("word") or "").strip()
@@ -65,8 +71,14 @@ def parse(path, stats=None, min_rank=None):
             if any(freq):
                 fields.append((C.T_FREQ,
                                b"".join(x.to_bytes(2, "little") for x in freq)))
-            # SYL_EN（tag 0x09）尚未產生 —— 卡在 D2（SAM vs eSpeak-ng）未決。
-            # 決定後在這裡補一個 g2p 呼叫即可，索引與其他欄位都不必動。
+            # SYL_EN：音標 -> 音素 id。不需要 letter-to-sound 引擎，
+            # 因為 ECDICT 本身就附音標（與中文附拼音是同一個推論）。
+            ipa = _unescape(row.get("phonetic")).strip()
+            if phoneme is not None and ipa:
+                syl = phoneme.to_ids(ipa, stats=bad_ipa)
+                if syl:
+                    fields.append((C.T_SYL_EN, syl))
+                    stats["with_pron"] = stats.get("with_pron", 0) + 1
             r = rank_ec(row)
             if min_rank is not None and r > min_rank:
                 continue

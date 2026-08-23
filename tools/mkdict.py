@@ -21,6 +21,7 @@ from dictbuild.normalize import normalize_ce, normalize_ec  # noqa: E402
 
 def _report(stats):
     unknown = stats.pop("unknown_syllables", None)
+    bad_ipa = stats.pop("unknown_ipa", None)
     for k, v in stats.items():
         print("  %-20s %s" % (k, v))
     if unknown:
@@ -29,6 +30,11 @@ def _report(stats):
               % (len(unknown), sum(unknown.values())))
         print("   ", ", ".join("%s x%d" % kv for kv in top))
         print("  ↑ 這些要嘛是音節表漏了，要嘛是資料裡的外來語。錄音前先看這份。")
+    if bad_ipa:
+        top = sorted(bad_ipa.items(), key=lambda kv: -kv[1])[:15]
+        print("  音標裡無法對應的字元 %d 種（合計 %d 次），最常見："
+              % (len(bad_ipa), sum(bad_ipa.values())))
+        print("   ", ", ".join("%s(U+%04X) x%d" % (k, ord(k), v) for k, v in top))
 
 
 def cmd_build(kind, src, outdir):

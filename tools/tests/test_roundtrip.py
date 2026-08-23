@@ -15,6 +15,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from dictbuild import build_ce, build_ec, container as C, pinyin, syllable
+from synth import phoneme
 from dictbuild.normalize import normalize_ce, normalize_ec
 
 FAILED = []
@@ -235,11 +236,69 @@ def test_common_index_mismatch():
             check(True, "常用詞索引與 DAT 不同步會報錯（重轉檔時容易只更新一個）")
 
 
+def test_phonemes():
+    print("英文音標 -> 音素（FORMAT.md §4.1 SYL_EN）")
+    ph = lambda t: [p for p, _s in phoneme.parse(t)]
+    st = lambda t: phoneme.parse(t)
+
+    # ECDICT 的髒資料。每一條都是實際踩過的，不是假想的
+    check(ph(chr(0x4D9) + "'b" + chr(0xE6) + "nd" + chr(0x4D9) + "n")
+          == ["ax", "b", "ae", "n", "d", "ax", "n"],
+          "西里爾 schwa 當成 schwa（比真 IPA schwa 還常見）")
+    check(ph("'" + chr(0x254) + ":lb" + chr(0x254) + ":" + chr(94))[-1] == "g",
+          "mojibake 的 ^ 還原成 g（Aalborg）")
+    check(ph(chr(0xE6) + "d'v" + chr(92) * 4 + ":b" + chr(0x4D9) + "m")
+          == ["ae", "d", "v", "er", "b", "ax", "m"],
+          "連續反斜線還原成 schwa（ad verbum）")
+    check("ea" in ph("'" + chr(0x454) + chr(0x259) + "ri" + chr(0x259) + "l"),
+          "西里爾 ye 當成 " + chr(0x25B) + "（actuarial）")
+    check("ea" in ph("'" + chr(0x3B5) + chr(0x259) + "ri" + chr(0x259) + "n"),
+          "希臘 epsilon 當成 " + chr(0x25B) + "（-arian）")
+    check(ph(chr(0x2CA) + chr(0xE6) + "b" + chr(0x4D9) + "tsi")[0] == "ae",
+          "U+02CA 是另一種主重音記號（abbotcy）")
+
+    # 這兩條是靜默失敗，沒有測試就會再犯
+    got = st("," + chr(0x25A) + "e" + chr(0x26A) + " bi: 'si:")
+    check(len(got) > 0,
+          "逗號是次重音不是分隔符（誤 split 曾靜默丟掉 15% 的發音）")
+    sec = st("," + chr(0xE6) + "b" + chr(0x259))
+    check(any(x == 2 for _p, x in sec), "次重音記成 stress=2，與主重音區分")
+    check(ph(chr(0x26A) + "g'zem(p)t; eg-")[:2] == ["ih", "g"],
+          "分號才是多讀音分隔符，且括號被忽略")
+
+    check(phoneme.decode_id(phoneme.phoneme_id("ae", 1)) == ("ae", 1),
+          "音素 id 編解碼可逆")
+    # 注意：拉丁字母幾乎都是合法音素，要用真的不可解析的東西測
+    check(phoneme.to_ids("中文標點：（）") == b"", "完全無法解析時回空，不是例外")
+
+
+def test_syl_en_roundtrip():
+    print("SYL_EN 存進 .DAT 再讀回")
+    with tempfile.TemporaryDirectory() as d:
+        csvp = os.path.join(d, "e.csv")
+        with open(csvp, "w", encoding="utf-8", newline="") as f:
+            hdr = ("word,phonetic,definition,translation,pos,collins,"
+                   "oxford,tag,bnc,frq,exchange")
+            row = ("hello," + chr(0x4D9) + "'l" + chr(0x259)
+                   + "u,greeting,int. hi,int,3,1,cet4,1200,900,")
+            f.write(hdr + chr(10) + row + chr(10))
+        build_ec.build(csvp, os.path.join(d, "E.IDX"), os.path.join(d, "E.DAT"))
+        dd = C.Dictionary(os.path.join(d, "E.IDX"), os.path.join(d, "E.DAT"))
+        hit = dd.lookup(b"hello")
+        blob = hit[0].fields.get(C.T_SYL_EN, b"")
+        check(len(blob) > 0 and len(blob) % 2 == 0, "SYL_EN 是 u16 陣列")
+        ids = struct.unpack("<%dH" % (len(blob) // 2), blob)
+        phs = [phoneme.decode_id(i)[0] for i in ids]
+        check("l" in phs, "音素讀得回來（%s）" % " ".join(phs))
+        dd.close()
+
+
 if __name__ == "__main__":
     for t in (test_normalize, test_syllables, test_container_roundtrip,
               test_truncated_keys, test_prefix, test_builders,
               test_mismatch_detection, test_forward_compat,
-              test_common_index, test_common_index_mismatch):
+              test_common_index, test_common_index_mismatch,
+              test_phonemes, test_syl_en_roundtrip):
         t()
     print()
     if FAILED:

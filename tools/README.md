@@ -47,6 +47,8 @@ python tools/mkdict.py check out/DICT
 | `dictbuild/pinyin.py` | 拼音字串 → 音節 id，含變調 |
 | `dictbuild/build_ec.py` | ECDICT CSV → EC.IDX/EC.DAT |
 | `dictbuild/build_ce.py` | CC-CEDICT → CE.IDX/CE.DAT |
+| `synth/phoneme.py` | 英文音標 → 音素 id。存在的理由是 ECDICT 的音標很髒 |
+| `synth/voice.py` `synth/prosody.py` | U3 的共振峰合成器，見 docs/U3-REPORT.md |
 | `tests/test_roundtrip.py` | 自我驗證，**不需要真實字典資料** |
 
 ---
@@ -65,8 +67,10 @@ SD 讀取次數。這是 PLAN.md §4「後台可在 PC 上測」的第一個落�
 
 ## 已知限制
 
-- **`SYL_EN`（英文發音，tag 0x09）尚未產生** —— 卡在 D2（SAM vs eSpeak-ng）
-  未決。決定後在 `build_ec.py` 補一個 g2p 呼叫即可，索引與其他欄位都不必動。
+- **`SYL_EN` 已產生**（218,062 筆，佔有音標詞條的 99.999%）。不需要
+  letter-to-sound 引擎 —— ECDICT 本身就附音標，與中文附拼音是同一個推論。
+  **D2（SAM vs eSpeak-ng）因此可能問錯了**：兩個都是為了「從拼寫推發音」，
+  而那件事字典已經做完了。
 - **音節表比標準拼音多約 17 個**。規則生成的副產物，是不存在的組合。
   它們只佔用不會被使用的 id，執行期無成本。真正該錄哪些音節，應由真實
   CC-CEDICT 轉檔的統計決定（已可跑），比手工修表可靠。
@@ -91,6 +95,10 @@ SD 佔用合計約 108 MB。讀取次數與合成資料的預測一致。
 `help hell hello helen helpful`，純字母序模式下得到
 `helen helena helens held helical`。前者只花 13 次 SD 讀取，
 且全部落在小的常用詞索引上。
+
+英文音標 → 音素對應率 **99.999%**（218,062 / 218,065）。常用詞的音標覆蓋率：
+前 2,000 名 98.8%、前 20,000 名 90.5%（全部 77 萬詞則只有 28.3%，但那些是
+沒人會查的專名與技術詞）。
 
 中文音節對應率 **99.98%**（約 30 萬個音節中 59 個對不上，是 cp/bp 之類的
 縮寫、m/ng 語氣詞、與 biáng 這種特例）。另外分類統計出：兒化韻 692 次、
