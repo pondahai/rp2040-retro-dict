@@ -54,6 +54,8 @@ typedef struct {
     int  body_lines;
     uint8_t syl[APP_MAX_SYL];      /* 目前詞條的發音 id，原樣複製 */
     uint16_t syl_len;
+    uint32_t idx_pos;              /* 目前詞條在主索引裡的序號 */
+    int  has_pos;                  /* idx_pos 有效嗎（查不到時就沒有） */
 
     /* Fn+1 發音。這一層不合成、不碰喇叭 —— 只把「該唸什麼」交出去：
      * ids 是 .DAT 存好的音素／音節 id（FORMAT.md §4.2），沒有的話 ids 為 NULL，

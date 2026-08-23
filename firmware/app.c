@@ -78,26 +78,19 @@ static void refresh_cands(app *a)
         a->sel = n ? n - 1 : 0;
 }
 
-static int show_word(app *a, const char *word)
+static void show_record(app *a, const dict_record *rec_in)
 {
-    uint8_t key[DICT_MAX_KEY];
-    uint32_t klen = dict_normalize_ec(word, key, sizeof(key));
-    dict_record rec;
+    const dict_record *rec = rec_in;
 
-    if (!klen)
-        return 0;
-    if (dict_lookup(a->d, key, klen, a->blob, sizeof(a->blob), &rec) != 1)
-        return 0;
-
-    copy_field(&rec, DICT_T_HEADWORD, a->hw, sizeof(a->hw), &a->entry.headword);
-    copy_field(&rec, DICT_T_PHONETIC, a->ph, sizeof(a->ph), &a->entry.phonetic);
-    copy_field(&rec, DICT_T_TRANS_ZH, a->zh, sizeof(a->zh), &a->entry.trans_zh);
-    copy_field(&rec, DICT_T_DEF_EN, a->en, sizeof(a->en), &a->entry.def_en);
+    copy_field(rec, DICT_T_HEADWORD, a->hw, sizeof(a->hw), &a->entry.headword);
+    copy_field(rec, DICT_T_PHONETIC, a->ph, sizeof(a->ph), &a->entry.phonetic);
+    copy_field(rec, DICT_T_TRANS_ZH, a->zh, sizeof(a->zh), &a->entry.trans_zh);
+    copy_field(rec, DICT_T_DEF_EN, a->en, sizeof(a->en), &a->entry.def_en);
     {
         uint16_t n;
-        const uint8_t *p = dict_field(&rec, DICT_T_SYL_EN, &n);
+        const uint8_t *p = dict_field(rec, DICT_T_SYL_EN, &n);
         if (!p)
-            p = dict_field(&rec, DICT_T_SYL_ZH, &n);
+            p = dict_field(rec, DICT_T_SYL_ZH, &n);
         a->syl_len = 0;
         if (p) {
             if (n > APP_MAX_SYL)
@@ -109,6 +102,47 @@ static int show_word(app *a, const char *word)
     a->body_lines = ui_body_lines(a->f, &a->entry);
     a->scroll = 0;
     a->state = APP_RESULT;
+}
+
+static int show_word(app *a, const char *word)
+{
+    uint8_t key[DICT_MAX_KEY];
+    uint32_t klen = dict_normalize_ec(word, key, sizeof(key));
+    dict_record rec;
+
+    if (!klen)
+        return 0;
+    if (dict_lookup(a->d, key, klen, a->blob, sizeof(a->blob), &rec) != 1)
+        return 0;
+    show_record(a, &rec);
+    /* 記住這一筆在索引裡的位置，PGUP/PGDN 才知道上一個／下一個是誰。
+     * 索引本來就是按鍵排序的，所以「相鄰」就是字母序的前後一個。 */
+    a->idx_pos = dict_lower_bound(&a->d->main, key, klen);
+    a->has_pos = 1;
+    return 1;
+}
+
+/* 直接用索引序號取詞 —— 不再查鍵，因為序號本身就是答案。
+ * 同一個鍵有多筆（多音字、同形異義詞）時，相鄰序號就是同一個詞的下一個
+ * 義項，這正是使用者按 PGDN 會期待的行為。 */
+static int show_at(app *a, uint32_t pos)
+{
+    dict_entry e;
+    dict_record rec;
+
+    if (pos >= a->d->main.rec_count)
+        return 0;
+    if (dict_index_read(&a->d->main, pos, &e) != DICT_OK)
+        return 0;
+    if (e.len > sizeof(a->blob))
+        return 0;
+    if (a->d->read_dat(a->d->dat_ctx, e.off, e.len, a->blob) != 0)
+        return 0;
+    if (dict_record_parse(a->blob, e.len, &rec) != DICT_OK)
+        return 0;
+    show_record(a, &rec);
+    a->idx_pos = pos;
+    a->has_pos = 1;
     return 1;
 }
 
@@ -204,13 +238,10 @@ static void typing_key(app *a, const key_event *ev)
 
 static void result_key(app *a, const key_event *ev)
 {
-    int page = ui_body_rows() - 1;
     int max = a->body_lines - ui_body_rows();
 
     if (max < 0)
         max = 0;
-    if (page < 1)
-        page = 1;
 
     switch (ev->code) {
     case KEY_UP:
@@ -221,11 +252,15 @@ static void result_key(app *a, const key_event *ev)
         if (a->scroll < max)
             a->scroll++;
         break;
+    /* PGUP/PGDN 是**換詞**不是翻頁：紙本字典翻頁就是換到旁邊的詞，而內文
+     * 捲動已經有上下鍵了。索引是排序好的，所以序號 ±1 就是字母序的前後一個。 */
     case KEY_PGUP:
-        a->scroll = a->scroll > page ? a->scroll - page : 0;
+        if (a->has_pos && a->idx_pos > 0)
+            show_at(a, a->idx_pos - 1);
         break;
     case KEY_PGDN:
-        a->scroll = a->scroll + page < max ? a->scroll + page : max;
+        if (a->has_pos)
+            show_at(a, a->idx_pos + 1);
         break;
     case KEY_ESC:
     case KEY_BS:
