@@ -77,6 +77,16 @@ void keys_init(keys *k)
     k->repeat_rc = 0xFF;
 }
 
+/* 這些鍵是**命令**不是文字，連發沒有意義而且會出事：Fn+1 是發音，連發會
+ * 讓一個字被打斷重唸好幾次（實機症狀是「ap ap approach」）。手指按著組合鍵
+ * 本來就會比按字母久，再加上唸一次要先合成再重畫，很容易就超過連發門檻。
+ * 方向鍵與退格則相反 —— 那兩個沒有連發會很難用。 */
+static int is_command(uint8_t code)
+{
+    return (code >= KEY_F1 && code <= KEY_F10) ||
+           code == KEY_ENTER || code == KEY_ESC || code == KEY_TAB;
+}
+
 /* FN + 數字 = F1..F10（生態系既有慣例，見 PLAN.md §2.2）。 */
 static uint8_t fn_translate(uint8_t code)
 {
@@ -164,6 +174,7 @@ int keys_update(keys *k, const uint8_t rows[8], uint32_t now_ms,
                 k->repeat_rc = (uint8_t)rc;
                 k->repeat_at = now_ms + KEYS_REPEAT_MS;
             } else if (down && k->repeat_rc == rc &&
+                       !is_command(code) &&
                        (int32_t)(now_ms - k->repeat_at) >= 0) {
                 n = emit(out, max, n, code, mods, 1);
                 k->repeat_at = now_ms + KEYS_RATE_MS;

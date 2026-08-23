@@ -10,7 +10,8 @@
  *   test_app <DICT目錄> run <腳本> <輸出前綴>  跑一段腳本，[SNAP] 處存圖
  *
  * 腳本裡可列印字元照打，特殊鍵寫成 [ENTER] [BS] [ESC] [UP] [DOWN]
- * [PGUP] [PGDN] [F1] [SNAP]。
+ * [PGUP] [PGDN] [F1] [SNAP]。加 @毫秒 表示按住多久，例如 [F1@800] ——
+ * 連發只有按住才測得到，預設的 50ms 永遠碰不到那條路。
  */
 
 #include <stdio.h>
@@ -186,7 +187,9 @@ static void tick(const uint8_t rows[8])
 }
 
 /* 按下再放開。兩邊都要撐過去彈跳時間，否則什麼都不會發生。 */
-static void press(uint8_t code)
+/* hold_ticks 是按住幾個 5ms 刻度。預設 10（50ms）是「輕輕按一下」，
+ * 但真人按組合鍵會按到好幾百毫秒 —— 連發那條路要靠它才測得到。 */
+static void press_hold(uint8_t code, int hold_ticks)
 {
     uint8_t rows[8];
     int r, c, s, mr = 0, mc = 0, i, has_mod;
@@ -216,7 +219,7 @@ static void press(uint8_t code)
     for (i = 0; i < 10; i++)
         tick(rows);
     rows[r] |= (uint8_t)(1 << c);
-    for (i = 0; i < 10; i++)
+    for (i = 0; i < hold_ticks; i++)
         tick(rows);
     rows[r] &= (uint8_t)~(1 << c);
     for (i = 0; i < 10; i++)
@@ -224,6 +227,11 @@ static void press(uint8_t code)
     memset(rows, 0, sizeof(rows));
     for (i = 0; i < 10; i++)
         tick(rows);
+}
+
+static void press(uint8_t code)
+{
+    press_hold(code, 10);
 }
 
 static void snapshot(const char *prefix)
@@ -287,11 +295,21 @@ static void run_script(const char *script, const char *prefix)
                 snapshot(prefix);
                 hit = 1;
             }
-            for (i = 0; !hit && TOKENS[i].name; i++)
-                if (strcmp(name, TOKENS[i].name) == 0) {
-                    press(TOKENS[i].code);
-                    hit = 1;
+            {
+                char *at = strchr(name, '@');
+                int hold = 10;
+                if (at) {
+                    *at = 0;
+                    hold = atoi(at + 1) / 5;     /* 毫秒 -> 5ms 刻度 */
+                    if (hold < 1)
+                        hold = 1;
                 }
+                for (i = 0; !hit && TOKENS[i].name; i++)
+                    if (strcmp(name, TOKENS[i].name) == 0) {
+                        press_hold(TOKENS[i].code, hold);
+                        hit = 1;
+                    }
+            }
             if (!hit) {
                 fprintf(stderr, "不認得的鍵 [%s]\n", name);
                 exit(3);
