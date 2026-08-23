@@ -31,6 +31,7 @@
 | 鍵盤解碼 | 完成，`firmware/keys.c`，用實測真值表 |
 | 前景狀態機 | 完成，`firmware/app.c`，兩個畫面 |
 | 板子端 sketch | 編得過，`RetroDict/`，**未上機驗證** |
+| 偏移版編譯 | 完成，`build_offset.bat`，佈局檢查通過 |
 | 發音接上 UI | F1 只有掛勾，還沒接 synth.c |
 | 中英切換 / 注音 IME | **完全沒開始** |
 
@@ -89,14 +90,18 @@ python tools/ui_session.py
 C 的部分要先用 `firmware/build_pc.bat`、`build_synth.bat`、`build_ui.bat` 與
 `build_app.bat` 編譯（需要 Visual Studio 2022 Community）。
 
-板子的 uf2：
+板子的 uf2（**要燒的是偏移版**）：
 
 ```bash
-build_uf2.bat [arduino-cli 的路徑]
+build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
 ```
 
 需要 arduino-cli 與 `rp2040:rp2040` 5.6.1。SD 卡要有 `/DICT/`
 （`EC.IDX`、`EC.DAT`、`ECC.IDX`、`FONT.BIN`）。
+
+實測佈局：image `0x10004000..0x10024200`（131,584 bytes），
+向量表 `SP=0x20042000 Reset=0x100040e3`，載入器 `app_present()` 的條件都通過。
+合併跳板後 `RetroDict_standalone.uf2` 578 blocks。
 
 ---
 
@@ -140,9 +145,10 @@ build_uf2.bat [arduino-cli 的路徑]
    在 PC 上驗證到不能再驗證了。會壞的只剩三種樣子：畫面不亮（初始化序列
    或背光腳）、按鍵不動（矩陣時序或 `7-col` 的位元順序）、SD 讀不到
    （路徑或 spi1 接腳）。三種各自對應 `RetroDict.ino` 裡一段搬過來的程式碼
-4. **偏移版編譯** —— 最終產物必須連結在 `0x10004000`（§2.9），
-   要把 `PicoApple2-KeyboardTester/loader_offset/` 那套搬過來，
-   每次 build 都跑 `check_flash_layout.py`
+4. **選單封面圖** —— 載入器要 `RetroDict.ino.RAW`：96x96 RGB565 big-endian、
+   無標頭、**固定 18432 bytes**（載入器只用檔案長度驗證），與 uf2 同放 SD
+   根目錄。用 `rp2040-retro-loader/tools/make_thumb.py` 從一張圖產生，
+   但**還沒有那張圖**
 5. **F1 接上 synth.c** —— 目前 `app.c` 只有掛勾（`a->speak`），
    還缺 PWM 輸出與把音標餵給合成器
 6. **注音 IME**：要先 clone `pico_keyboard_ime_terminal`，**本機還沒有**
@@ -223,3 +229,4 @@ OFL.txt」。**已 commit，未 push。**
 | `tools/README.md` | 轉檔工具與合成器（Python） |
 | `firmware/README.md` | C 實作（後台／合成器／UI／鍵盤／狀態機）、比對方法、移植踩過的坑 |
 | `RetroDict/RetroDict.ino` | 板子上唯一碰硬體的檔案：ILI9341、矩陣掃描、SD |
+| `loader_offset/*.py` | 偏移編譯的 linker script 生成器與 build 期佈局檢查（自 KeyboardTester 搬來，**不要手改產出的 .ld**）|

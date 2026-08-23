@@ -37,6 +37,19 @@ RP2040 掌機上的英漢／漢英電子字典，具備 1980 年代電子字典�
 
 ## 編譯
 
+**要燒進板子的是偏移版**（連結在 `0x10004000`，前 16KB 留給載入器／跳板）：
+
+```bash
+build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
+```
+
+產出兩個檔案：`build_offset/RetroDict.ino.uf2` 給已經有載入器的板子（丟 SD 卡
+根目錄），`build_offset/RetroDict_standalone.uf2` 前面接上跳板，可以直接 USB 燒。
+腳本會跑 `loader_offset/check_flash_layout.py` —— 偏移錯了不會在編譯時報錯，
+只會在實機上變成黑畫面，而且症狀跟「根本沒燒進去」一模一樣。
+
+一般版（連結在 `0x10000000`，會蓋掉載入器，只適合單獨測試）：
+
 ```bash
 build_uf2.bat [arduino-cli 的路徑]
 ```
