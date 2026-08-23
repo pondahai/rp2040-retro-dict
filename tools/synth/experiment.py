@@ -11,7 +11,7 @@ import math
 import os
 import sys
 
-from . import prosody, spectrum, voice
+from . import english, phoneme, prosody, spectrum, voice
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                    "..", "..", "out", "audio")
@@ -98,6 +98,37 @@ def _dict_word(s):
     except SystemExit:
         return None
     return s.render(sylls)
+
+
+@case("11_en_vowels", "英文母音：beat bit bet bat father but boot bird。分不開就白搭")
+def _en_vowels(s):
+    out = []
+    for ipa in ("bi:t", "bit", "bet", "b" + chr(0xE6) + "t",
+                "'f" + chr(0x251) + ":" + chr(0x259) + "', b" + chr(0x28C) + "t",
+                "bu:t", "b" + chr(0x259) + ":d"):
+        out += english.synth(phoneme.parse(ipa))
+        out += [0.0] * int(voice.SR * 0.12)
+    return out
+
+
+@case("12_en_words", "英文單字：hello dictionary machine language computer")
+def _en_words(s):
+    out = []
+    for w in ("hello", "dictionary", "machine", "language", "computer"):
+        try:
+            phones, _ipa = s.from_dict_en(w)
+        except SystemExit:
+            return None
+        out += english.synth(phones)
+        out += [0.0] * int(voice.SR * 0.15)
+    return out
+
+
+@case("13_en_stress", "重音對照：'record（名詞）vs re'cord（動詞）。重音有沒有作用")
+def _en_stress(s):
+    a = english.synth([("r", 0), ("eh", 1), ("k", 0), ("ax", 0), ("d", 0)])
+    b = english.synth([("r", 0), ("ih", 0), ("k", 0), ("ao", 1), ("d", 0)])
+    return a + [0.0] * int(voice.SR * 0.25) + b
 
 
 # ---------------------------------------------------------------------------

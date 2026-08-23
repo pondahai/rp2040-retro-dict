@@ -166,6 +166,87 @@ def _ms(x):
     return int(SR * x / 1000.0)
 
 
+def render(src, track, bw_track, pre_len, quiet_consonant=True):
+    """把聲源 + 共振峰軌跡 + 頻寬軌跡 算成波形。
+
+    中文與英文共用這一段 —— 兩者的差別只在怎麼「排」出這三條軌跡，
+    真正發聲的機制完全相同。這也是 D2 的答案：不需要兩個合成器。
+    """
+    total = len(src)
+    # --- 濾波 ---
+    r1, r2, r3 = Resonator(), Resonator(), Resonator()
+    out = []
+    for i in range(total):
+        f1, f2, f3 = track[i]
+        b1, b2, b3 = bw_track[i]
+        y = r1.run(src[i], f1, b1)
+        y = r2.run(y, f2, b2)
+        y = r3.run(y, f3, b3)
+        out.append(y)
+
+    # --- 嘴唇輻射 ---
+    # 聲音離開嘴唇時等效於一次微分（+6dB/oct）。與上面的聲門低通
+    # （-12dB/oct）合起來是 -6dB/oct，這才是母音該有的整體斜率。
+    prev = 0.0
+    for i in range(total):
+        cur = out[i]
+        out[i] = cur - prev
+        prev = cur
+
+    # --- 響度正規化 ---
+    # Klatt 有 AV（濁音）與 AF（擦音）兩個獨立增益，我一開始省掉了，
+    # 結果噪音路徑經過高 Q 共振器後遠比濁音大：實測 zi 的峰值 512、
+    # ma 只有 0.3，**差 1700 倍**。整個檔案照最大值正規化之後，母音被壓到
+    # 聽不見，只剩噪音的啾啾聲 —— 而全是 ma 的測試檔剛好逃過一劫。
+    #
+    # 這裡改成每個音節各自正規化到一致的響度。副作用是好的：真實裝置本來
+    # 就希望每個字一樣大聲。
+    def _rms(seq):
+        if not seq:
+            return 0.0
+        return math.sqrt(sum(v * v for v in seq) / len(seq))
+
+    body_rms = _rms(out[pre_len:])
+    if body_rms > 1e-9:
+        g = TARGET_RMS / body_rms
+        for i in range(total):
+            out[i] *= g
+    pre_rms = _rms(out[:pre_len])
+    if pre_rms > 1e-9:
+        g = (TARGET_RMS * CONSONANT_LEVEL) / pre_rms
+        for i in range(pre_len):
+            out[i] *= g
+
+    # RMS 拉平了還不夠：**波峰因數**因音節而異。嘴唇輻射的一階差分會讓
+    # 某些母音的波形變得很尖，RMS 相同但峰值差六倍；檔案層級的峰值正規化
+    # 就又會把其他音節壓低。
+    #
+    # 用固定門檻的軟限幅，不要用相對自己的門檻（相對的跨音節等於沒作用）。
+    # 附帶好處：軟飽和的輕微失真正好是 80 年代裝置該有的音色。
+    for i in range(total):
+        out[i] = SOFT_LIMIT * math.tanh(out[i] / SOFT_LIMIT)
+
+    # 限幅會把尖的波形削掉一部分能量，所以再校一次 RMS。
+    final_rms = _rms(out)
+    if final_rms > 1e-9:
+        g = min(TARGET_RMS / final_rms, 1.0 / max(1e-9, max(abs(v) for v in out)))
+        for i in range(total):
+            out[i] *= g
+
+    # --- 音量包絡 ---
+    atk, rel = _ms(12), _ms(30)
+    for i in range(total):
+        g = 1.0
+        if i < pre_len and quiet_consonant:
+            g = 0.9
+        if i < atk:
+            g *= i / atk
+        if i > total - rel:
+            g *= max(0.0, (total - i) / rel)
+        out[i] *= g
+    return out
+
+
 def synth_syllable(base, tone, dur_ms, f0_curve, debug=None):
     """合成一個音節。
 
@@ -247,78 +328,8 @@ def synth_syllable(base, tone, dur_ms, f0_curve, debug=None):
     bw_track = [NOISE_BW if (noisy and i < len(pre)) else VOWEL_BW
                 for i in range(total)]
 
-    # --- 濾波 ---
-    r1, r2, r3 = Resonator(), Resonator(), Resonator()
-    out = []
-    for i in range(total):
-        f1, f2, f3 = track[i]
-        b1, b2, b3 = bw_track[i]
-        y = r1.run(src[i], f1, b1)
-        y = r2.run(y, f2, b2)
-        y = r3.run(y, f3, b3)
-        out.append(y)
-
-    # --- 嘴唇輻射 ---
-    # 聲音離開嘴唇時等效於一次微分（+6dB/oct）。與上面的聲門低通
-    # （-12dB/oct）合起來是 -6dB/oct，這才是母音該有的整體斜率。
-    prev = 0.0
-    for i in range(total):
-        cur = out[i]
-        out[i] = cur - prev
-        prev = cur
-
-    # --- 響度正規化 ---
-    # Klatt 有 AV（濁音）與 AF（擦音）兩個獨立增益，我一開始省掉了，
-    # 結果噪音路徑經過高 Q 共振器後遠比濁音大：實測 zi 的峰值 512、
-    # ma 只有 0.3，**差 1700 倍**。整個檔案照最大值正規化之後，母音被壓到
-    # 聽不見，只剩噪音的啾啾聲 —— 而全是 ma 的測試檔剛好逃過一劫。
-    #
-    # 這裡改成每個音節各自正規化到一致的響度。副作用是好的：真實裝置本來
-    # 就希望每個字一樣大聲。
-    def _rms(seq):
-        if not seq:
-            return 0.0
-        return math.sqrt(sum(v * v for v in seq) / len(seq))
-
-    body_rms = _rms(out[len(pre):])
-    if body_rms > 1e-9:
-        g = TARGET_RMS / body_rms
-        for i in range(total):
-            out[i] *= g
-    pre_rms = _rms(out[:len(pre)])
-    if pre_rms > 1e-9:
-        g = (TARGET_RMS * CONSONANT_LEVEL) / pre_rms
-        for i in range(len(pre)):
-            out[i] *= g
-
-    # RMS 拉平了還不夠：**波峰因數**因音節而異。嘴唇輻射的一階差分會讓
-    # 某些母音的波形變得很尖，RMS 相同但峰值差六倍；檔案層級的峰值正規化
-    # 就又會把其他音節壓低。
-    #
-    # 用固定門檻的軟限幅，不要用相對自己的門檻（相對的跨音節等於沒作用）。
-    # 附帶好處：軟飽和的輕微失真正好是 80 年代裝置該有的音色。
-    for i in range(total):
-        out[i] = SOFT_LIMIT * math.tanh(out[i] / SOFT_LIMIT)
-
-    # 限幅會把尖的波形削掉一部分能量，所以再校一次 RMS。
-    final_rms = _rms(out)
-    if final_rms > 1e-9:
-        g = min(TARGET_RMS / final_rms, 1.0 / max(1e-9, max(abs(v) for v in out)))
-        for i in range(total):
-            out[i] *= g
-
-    # --- 音量包絡 ---
-    atk, rel = _ms(12), _ms(30)
-    for i in range(total):
-        g = 1.0
-        if i < len(pre) and kind not in ("nasal", "lateral", "approx", "none"):
-            g = 0.9
-        if i < atk:
-            g *= i / atk
-        if i > total - rel:
-            g *= max(0.0, (total - i) / rel)
-        out[i] *= g
-    return out
+    return render(src, track, bw_track, len(pre),
+                  quiet_consonant=kind not in ("nasal", "lateral", "approx", "none"))
 
 
 def _interp_curve(curve, p):
