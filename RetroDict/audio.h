@@ -1,27 +1,44 @@
-// PWM 音訊輸出（GPIO 7，與 PicoApple2 / InfoNES 同一支腳）。
-//
-// 做法沿用 InfoNES 的 audio.c：PWM 的責任週期就是取樣值，後面接 RC 低通與
-// PAM8403。差別在於這裡只要**一次放一整段**（按 Fn+1 唸一個字），不需要
-// InfoNES 那種連續串流，所以不必用三段 DMA 鏈與中斷 —— 一個 DMA 通道就夠。
-//
-// 兩個關鍵設定：
-//   PWM 載波跑 490kHz（wrap 254、clkdiv 1）—— 遠在聽覺之上，RC 濾掉就好。
-//     若讓 PWM 直接跑在 16kHz 取樣率上，載波本身就會變成刺耳的高音。
-//   取樣速率由 **DMA timer** 決定（125MHz x 2/15625 = 16000Hz），不是由 PWM。
-//     這樣載波頻率與取樣率就完全解耦了。
-#ifndef RETRODICT_AUDIO_H
-#define RETRODICT_AUDIO_H
+/* PWM 音訊輸出。**原封取自 rp2040-ili9341-infones 的 software/infones/audio.c
+ * 與 audio.h**（同一塊板子上已經驗證會響的那一份），只加了這段說明。
+ *
+ * 為什麼不自己寫一份小的：第一版是自己寫的 —— PWM 載波 490kHz、取樣速率
+ * 用 DMA timer 給、8-bit DMA 直接寫進 PWM 的 cc 暫存器。結果實機只有卡答聲，
+ * 連 1kHz 方波測試音也一樣。InfoNES 這份繞了一圈（先把 8-bit 樣本寫進 RAM 的
+ * single_sample，再用 **32-bit** DMA 把整個 word 搬進 cc，並用 REPETITION_RATE
+ * 讓 PWM 跑在取樣率的 4 倍）—— 那個繞法很可能正是為了避開窄寬度寫周邊暫存器
+ * 的問題。既然板子上已經有一份會響的，就用它。
+ *
+ * 注意：audio_mixer_step() 要在主迴圈裡定期呼叫，緩衝區是 1024 個樣本
+ * （16kHz 下 64ms），久久不呼叫就會斷音。
+ */
+#ifndef AUDIO_H_FILE
+#define AUDIO_H_FILE
 
+// #define AUDIO_BUFFER_SIZE 1024
+#define AUDIO_BUFFER_SIZE 1024
+#define AUDIO_MAX_SOURCES 2
+
+#include <stdbool.h>
 #include <stdint.h>
 
-// 準備 PWM 與 DMA。只需呼叫一次。
-void audio_init(int pin, int sample_rate);
-// 播放一段 8-bit 無號 PCM（128 = 靜音）。非阻塞：DMA 播、CPU 繼續跑 UI。
-// 緩衝區在播完之前不可以動，所以呼叫端要用不會被覆寫的那一塊。
-void audio_play(const uint8_t *pcm, int n);
-// 還在播嗎。
-bool audio_busy(void);
-// 停下來並回到靜音位準。
-void audio_stop(void);
-
+#ifdef __cplusplus
+extern "C" {
 #endif
+
+void audio_init(int audio_pin, int sample_freq);
+uint8_t *audio_get_buffer(void);
+
+int audio_play_once(const uint8_t *samples, int len);
+int audio_play_loop(const uint8_t *samples, int len, int loop_start);
+
+void audio_source_stop(int source_id);
+void audio_source_set_volume(int source_id, uint16_t volume);
+
+void audio_mixer_step(void);
+bool audio_is_source_active(int source_id);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* AUDIO_H_FILE */

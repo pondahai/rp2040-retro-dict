@@ -24,7 +24,9 @@
 #include <SD.h>
 
 #include "TFT_DMA.h"
+extern "C" {
 #include "audio.h"
+}
 
 extern "C" {
 #include "src/rd_app.h"
@@ -200,6 +202,16 @@ static void pcm_sink(void *ctx, const uint8_t *pcm, int n)
 // 純方波測試音。用途是**把病因切開**：按 Fn+2 聽得到嗶聲，就表示 PWM、DMA、
 // 接線、喇叭都是好的，問題在合成那一側；還是只有卡答聲，那就是音訊路徑本身。
 // 卡答聲的來源是 DMA 沒有波形可播，PWM 位準只跳了一下。
+static int g_speak_src = -1;
+
+static void speak_stop(void)
+{
+    if (g_speak_src >= 0) {
+        audio_source_stop(g_speak_src);
+        g_speak_src = -1;
+    }
+}
+
 static void tone(int hz, int ms)
 {
     int n = SYN_SR * ms / 1000;
@@ -213,14 +225,15 @@ static void tone(int hz, int ms)
         g_pcm[i] = ((i / half) & 1) ? 180 : 74;
     }
     g_pcm_n = n;
-    audio_play(g_pcm, n);
+    speak_stop();
+    g_speak_src = audio_play_once(g_pcm, n);
 }
 
 static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
                      const char *fallback)
 {
     (void)ctx;
-    audio_stop();               // 上一次還在播就打斷它
+    speak_stop();               // 上一次還在播就打斷它
     g_pcm_n = 0;
     speech_init(&g_speech, pcm_sink, NULL, g_syn_work, g_syn_seg, g_syn_pcm8,
                 SPEAK_MAX_SEG);
@@ -235,7 +248,7 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
         tone(200, 120);
         return;
     }
-    audio_play(g_pcm, g_pcm_n);
+    g_speak_src = audio_play_once(g_pcm, g_pcm_n);
 }
 // 40KB：兩張碼位表 + 窄字前進寬度 + ASCII 字模，實測要 39,123 bytes。
 static uint8_t g_font_cache[40 * 1024];
@@ -399,6 +412,10 @@ void loop()
         }
         app_key(&g_app, &ev[i]);
     }
+
+    // 緩衝區只有 1024 個樣本（16kHz 下 64ms），所以每一圈都要餵。查詞或
+    // 重畫畫面會佔掉幾十毫秒，這也是為什麼發音時不要同時做那些事。
+    audio_mixer_step();
 
     if (app_render(&g_app))
         blit();
