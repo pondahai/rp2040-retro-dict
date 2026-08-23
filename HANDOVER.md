@@ -1,186 +1,197 @@
 # HANDOVER
 
 給下一個接手的人（或下一段對話）。日期：2026-08-23。
-最後更新：合成器移植成 C 並與 Python 比對通過。韌體端共約 8.5KB。
+
+**這份是入口。** 讀完再依需要進 `docs/`，不要從 `docs/PLAN.md` 開始 ——
+那份有幾章已經被實作結果推翻，改寫過但仍以規劃視角書寫。
 
 ---
 
-## 現況一句話
+## 一句話
 
-**格式定稿、轉檔工具可用、合成器可用、查詢後台的 C 版已驗證。
-仍未碰過任何硬體。**
-格式見 [docs/FORMAT.md](docs/FORMAT.md)，工具見 [tools/README.md](tools/README.md)。
-工具已用**真實資料**跑過：EC 77 萬筆、CE 12.5 萬筆，SD 共約 108MB，
-查詢 16 / 13 次 SD 讀取，中文音節對應率 99.98%。
-原始檔在 `data/`（未進版控，重下見 tools/README.md）。
-規劃全文在 [docs/PLAN.md](docs/PLAN.md) —— 動手前先讀那份，這裡只講
-「怎麼走到這一步」與「接下來從哪接」。
+**PC 端全部做完了，韌體端有查詢後台與合成器，但還沒碰過硬體。**
 
-### repo 狀態
-
-- 已 `git init`，**沒有 remote**（要推上 GitHub 需先建 repo）
-- 追蹤中：`README.md` / `HANDOVER.md` / `docs/PLAN.md` / `.gitignore`
-- `tools/` 轉檔工具與合成器（純 Python，無第三方相依）
-- `firmware/` 查詢後台 + 合成器的 C 實作（合計約 8.5KB，靜態 RAM 0）。
-  `firmware/compare.py` 與 `firmware/compare_synth.py` 會跟 Python 參考
-  實作比對，兩者都在 PC 上跑、不需要板子
-- `LICENSE` 已補上（GPL-3.0，取自 PicoApple2-KeyboardTester）
+到目前為止一次板子都沒燒過 —— 那不是進度落後，是 PLAN.md §4「後台與前端
+分離」的直接結果：所有東西都能在 PC 上驗證。
 
 ---
 
-## 這份計畫是怎麼長出來的
+## 現在有什麼
 
-從一個問題開始：「在既有的 RP2040 掌機上做英漢／漢英字典 + 早期電子字典
-合成發音，可行嗎？」
+| | 狀態 |
+|---|---|
+| 字典檔格式 | 定稿，`docs/FORMAT.md` |
+| PC 端轉檔工具 | 完成，`tools/`，47 項自我驗證 |
+| 共振峰合成器（中英共用） | 完成，Python + C 兩份，比對通過 |
+| 查詢後台 | C 實作完成，與 Python 逐筆比對通過 |
+| 16×16 2bit 字模 | 完成，`tools/mkfont.py` |
+| UI 排版 | **只有預覽圖**，韌體端未實作 |
+| SD 驅動 / 鍵盤 / 注音 IME | **完全沒開始** |
 
-過程中有三次判斷被推翻，都值得記下來，因為推翻的理由本身就是設計依據：
-
-### 1. 中文發音從「建議第一版先做不到」變成「跟英文一樣簡單」
-
-原本估的最大障礙是漢字→拼音（g2p）：要大對照表 + 多音字消歧，在 MCU 上很痛。
-
-**後來發現這個問題根本不存在**：ECDICT 與 CC-CEDICT 的每筆詞條本來就附帶
-拼音含聲調。使用者查的詞，字典已經告訴你怎麼念了。不需要 g2p 引擎、
-不需要多音字消歧。中文發音因此降級成「錄音 + 拼接播放器」。
-
-### 2. GPL 從「地雷」變成「已經踩了，反而變方便」
-
-原本警告「Ekho 是 GPL-2+，會傳染」。
-
-**後來發現 PicoApple2-KeyboardTester 本身就是 GPL-3.0**，而字典要重用它的
-鍵盤掃描與 TFT_DMA。所以本專案**天生就是 GPL-3**。既然如此，GPL-2+ 的
-Ekho 引擎碼反而可以合法使用（`+` 可升到 3）。ECDICT 的 MIT 也相容。
-
-**但這只解決引擎，沒解決資料** —— 見下面 U1。
-
-### 3. 鍵盤從「未知數」變成「最大資產」
-
-一開始不確定輸入是 D-pad 還是完整鍵盤 —— 這會決定計畫成不成立。
-後來確認是 **64 鍵 8×8 完整打字鍵盤**，字典才值得做。
-連帶讓「注音輸入」成為可能（大千佈局所需鍵位全部存在，不需重新映射）。
-
-### 4. 規劃後期補上的兩章
-
-- **§3 SD 卡的角色** —— 字典跟其他韌體不同，是整個生命週期都在讀 SD。
-  關鍵是分清「loader 的根目錄限制」與「執行期可用子目錄」兩層規則。
-- **§4 後台與前端分離** —— 因為版面確定會大量變動而定的硬性架構要求。
-  最大回報是後台可在 PC 上測試，不需要硬體。
+韌體端目前 `firmware/dict.c` 1,444 B + `firmware/synth.c` 5,088 B + 參數表 1,938 B
+= **約 8.5 KB，靜態 RAM 0**（`-Os`、Cortex-M0+）。
 
 ---
 
-## 已定案（不要再翻案）
+## 怎麼從零重建
+
+repo 不含字典資料與字型（體積大、授權要各自遵守）。三步：
+
+### 1. 下載原始資料到 `data/`
+
+```bash
+curl -L -o data/ecdict.csv https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv
+curl -L -o data/cedict.txt.gz https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz
+gunzip data/cedict.txt.gz
+curl -L -o data/NotoSansSC-VF.otf https://github.com/notofonts/noto-cjk/raw/main/Sans/Variable/OTF/Subset/NotoSansSC-VF.otf
+```
+
+`ecdict.csv` 66MB（MIT）、`cedict.txt` 10MB（CC-BY-SA）、
+`NotoSansSC-VF.otf` 15MB（OFL 1.1）。
+字型另外用到 Windows 內建的 `NotoSansTC-VF.ttf` 與 `NotoSans-Regular.ttf`
+（同為 OFL）—— 換平台要自己補這兩份，路徑寫在 `tools/mkfont.py` 的 `FONTS`。
+
+### 2. 產生 SD 卡內容
+
+```bash
+python tools/mkdict.py ec data/ecdict.csv out/DICT
+python tools/mkdict.py ce data/cedict.txt out/DICT
+python tools/mkfont.py out/DICT
+python tools/mkdict.py check out/DICT
+```
+
+產物約 113MB：`EC.IDX/DAT`、`CE.IDX/DAT`、`ECC.IDX`（常用詞索引）、
+`FONT.BIN`。整個 `out/DICT` 複製到 SD 卡根目錄。
+
+### 3. 驗證
+
+```bash
+python tools/tests/test_roundtrip.py
+python firmware/compare.py 3000
+python firmware/compare_synth.py
+python tools/ui_preview.py
+python tools/say.py --experiment
+```
+
+C 的部分要先用 `firmware/build_pc.bat` 與 `firmware/build_synth.bat` 編譯
+（需要 Visual Studio 2022 Community）。交叉編譯用
+`~/.pico-sdk/toolchain/14_2_Rel1`。
+
+---
+
+## 已定案，不要再翻案
 
 | 項目 | 決定 |
 |---|---|
-| 中文輸入 | **注音**，非拼音。搬 `pico_keyboard_ime_terminal` 既有引擎 |
-| 最終產物 | **必須是偏移版**（連結 `0x10004000`），理由見 PLAN.md §2.8 |
-| 授權 | GPL-3.0（因重用 KeyboardTester / TFT_DMA） |
-| 字典資料 | ECDICT（英漢，MIT）+ CC-CEDICT（漢英，CC-BY-SA）。**不碰商業字典** |
-| 鍵盤對照表 | 用 KeyboardTester README 的**實測真值表**，不用 `PicoApple2.ino` 的舊表 |
-| 架構 | **後台與前端嚴格分離**，後台不知道螢幕存在、可在 PC 上測。見 PLAN.md §4 |
-| 字典檔格式 | v1 定稿，見 docs/FORMAT.md。32B 固定寬度索引、不壓縮、發音在轉檔期算好 |
-| 前綴候選 | 常用詞優先（模式 B）寫死，設定選單延後。中文無詞頻故仍是字母序 |
+| 中文輸入 | **注音**，搬 `pico_keyboard_ime_terminal` 的引擎 |
+| 最終產物 | **偏移版**（連結 `0x10004000`），見 PLAN.md §2.8 |
+| 授權 | GPL-3.0 |
+| 字典資料 | ECDICT + CC-CEDICT，不碰商業字典 |
+| 鍵盤對照表 | 用 KeyboardTester README 的**實測真值表** |
+| 架構 | 後台與前端嚴格分離，後台可在 PC 上測 |
+| 字典檔格式 | v1 定稿，見 FORMAT.md |
+| 前綴候選 | 常用詞優先（模式 B）寫死，設定選單延後 |
+| 發音 | **共振峰合成，中英共用一套**。不錄音、不用 SAM/eSpeak |
+| 字型 | **16×16 2bit 灰階**，Noto 轉出的 `FONT.BIN` |
+
+### 四個已經關閉的風險
+
+- **U1**（Ekho 音檔授權）—— 不需要任何錄音，問題消失
+- **U6**（英文合成器選型）—— 中英共用一套
+- **U7**（flash 空間）—— 合成器參數表 < 2KB
+- **U4**（16×16 字型來源）—— Noto，OFL 1.1
+
+原本最大的三個未知數是被**同一個發現**一起關掉的：字典本身就附了發音資訊
+（中文附拼音、英文附音標），所以不需要 g2p 引擎；而 1980 年代的電子字典
+本來就是共振峰合成，不是拼接錄音 —— 當年沒有記憶體放 1300 段錄音。
 
 ---
 
-## 下一段對話應該從哪開始
+## 還沒做的事（按建議順序）
 
-按優先序：
-
-1. ~~設計字典檔格式~~ ~~`tools/` 轉檔工具~~ **兩者皆已完成**。
-   下一步二選一：
-   - ~~下載真實資料跑一次轉檔~~ **已完成**，抓到兩個真 bug（見 git log）
-   - ~~FORMAT.md §8 前綴候選常用詞優先~~ **已實作**（打 `hel` 現在會出
-     `hello`）。已定案：資料端永遠產生 `ECC.IDX`，行為寫死模式 B，
-     **設定選單暫不做** —— 等音量／字型（D3）讓設定系統非存在不可時再搭便車
-   - ~~U3 音節拼接實驗~~ **已做**。現在需要的是**你去聽 `out/audio/` 那幾個
-     檔**（跑 `python tools/say.py --experiment` 產生），判斷三組 A/B。
-     聽不出差別的那幾組，對應的規則就可以刪掉
-2. **決定 D2 / D3 / D4**（PLAN.md §6.2）—— 這三個仍卡在使用者身上
-   - D2：英文合成走 SAM 還是 eSpeak-ng —— **這題可能問錯了**，見下
-   - D3：字型 —— **已有實測資料，見下**
-   - D4：生字本 / 考綱篩選要不要進第一版
-3. **處理 U1**（見下）—— 影響能不能公開，越早確定越好。
-
-### 建議最早動手的一件事
-
-**做 U3 的最小實驗：隨便錄十幾個音節，拼一句話聽聽看。**
-
-理由：它是技術上最不確定的一項（聲調銜接、三聲連讀變調、輕聲全是紙上談兵），
-而且因為後台與前端已經分離（§4），這個實驗**完全不需要 UI、不需要板子**，
-在 PC 上就能做完。如果拼接出來不能聽，整個中文發音的方案要重想 ——
-越早知道越好，不要等其他部分都做完。
+1. **U3 的三組 A/B 聽判** —— 音檔在 `out/audio/`（`python tools/say.py
+   --experiment` 產生）。比 `03` vs `04`（音節間隙）、`05` vs `06`
+   （三聲變調）、`07` vs `08`（輕聲看不看前字）。
+   **每個「聽不出差別」都代表一塊 `tools/synth/prosody.py` 的規則可以刪掉。**
+   這是唯一還沒兌現的實驗價值，而且很便宜。
+2. **D4**：生字本／考綱篩選要不要進第一版（ECDICT 已附 `tag` 欄位）
+3. **UI 的韌體實作** —— 字型與排版都定案了，`tools/ui_preview.py` 有可跑的
+   參考版面與斷行邏輯
+4. **SD 驅動**：`dict_read_fn` 的板子端實作，接上就能查詞
+5. **注音 IME**：要先 clone `pico_keyboard_ime_terminal`，**本機還沒有**
 
 ---
 
-## D2 可能是個假問題
+## 這個專案最貴的教訓
 
-SAM 與 eSpeak-ng 都是為了解決「從英文拼寫推出發音」。但 **ECDICT 每筆詞條
-就附了音標** —— 跟中文附拼音是同一個推論，只是一直沒人往英文那邊想。
+寫在這裡是因為它反覆出現，而且每次都花掉最多時間。
 
-音素抽取已完成（`tools/synth/phoneme.py`），覆蓋率 99.999%，常用詞的音標
-覆蓋率前 2000 名 98.8%。`SYL_EN` 欄位已經有資料了。
+### 一、「測試通過」要先確認測試真的測到東西
 
-所以剩下的問題不是「哪個 g2p 引擎」，而是「音素怎麼發出聲音」——
-而 U3 的共振峰合成器已經在做同一件事。**如果 U3 聽感可接受，D2 的答案
-很可能是「兩個都不要，中英共用一個合成器」。**
+| 案例 | 症狀 |
+|---|---|
+| C/Python 比對 | 中文鍵是 UTF-8，走命令列會被字碼頁弄壞所以被跳過 —— 腳本印「完全一致」，但**半個字典從沒驗證過** |
+| U3 聽判第一輪 | 測試檔 `01` 全是 `ma`，看似乾淨的對照組，讓「擦音比母音大 1700 倍」整類 bug 隱形 |
+| 英文母音 | 測試檔把 `father` 與 `but` 寫進同一個字串，黏成一句念出來 |
 
----
+### 二、壞的常常是尺，不是被量的東西
 
-## D3 / U4：字型已經有答案
+| 案例 | 假象 |
+|---|---|
+| 自相關沒正規化 | 把下降的四聲量成「上升到 276Hz」 |
+| 粗糙 DFT 每 4 點取樣 | 3kHz 以上全是混疊，量出 `a` 和 `i` 的頻譜一模一樣 |
+| 波形相關係數 | 擦音兩邊亂數不同本來就不會相關，`er` 的 F2/F3 靠太近會拍頻 —— 25 項全紅其實是指標選錯 |
 
-實際畫出來比較過（`tools/font_preview.py`、`font_stroke_test.py`、
-`font_vector_test.py`、`ui_preview.py`），結論：
+現在 `tools/synth/spectrum.py` 用真正的 radix-2 FFT，不抽樣不取巧。
 
-- **Cubic 11（11px）**：OFL 1.1，生態系已有。形近字分得清楚（易混 24/24），
-  但**高筆畫字糊成一團**，而字典有時要看筆畫
-- **Ark Pixel 12px**：OFL 1.1，但**缺常用字**（邊、辯、徵…），且 12px 一樣糊
-- **Ark Pixel 16px**：CJK 只有 97 字，不能用
-- **Noto + 16x16 2bit 灰階**：**選這個**。OFL 1.1、完整覆蓋、筆畫清楚
+### 三、真實資料一定比規格髒
 
-關鍵是 **ILI9341 是 16 位色不是單色**，所以字模可以做四階灰。純黑白的
-16px 光柵化會讓筆畫掉光；加上灰階就全部清楚。這個維度以前沒被算進 D3。
+ECDICT 與 CC-CEDICT 挖出來的，全部寫成回歸測試：
 
-`tools/mkfont.py` 產生 `FONT.BIN`（漢字 14,498 + 其他 1,349，共 1.0 MB，
-放 SD）。只收字典**實際用到**的字。`tools/ui_preview.py` 用它畫完整畫面。
+- **同一個音有多種字元**：schwa 三種（西里爾 U+04D9 比真 IPA 還常見）、
+  `ɛ` 三種（IPA／西里爾／希臘）、主重音三種
+- **mojibake**：`^` 其實是 `g`、連續反斜線其實是 schwa
+- **看起來像分隔符的其實不是**：逗號是**次重音記號**，拿去 split 會靜默
+  丟掉 15% 的發音
+- **`r5` 不是音節**，是兒化韻
+- 字面的 `\n` 兩個字元，不還原就會印在螢幕上
 
-**U4（16×16 字型來源與授權）因此關閉。**
+同一類問題也出現在字型：`ASCII_FIRST` 定義是 `0x20`，正則只認十進位就會
+抓到 `0`，整張 ASCII 表偏移 32 格（查 `A` 拿到 `a`）。
 
----
+### 四、使用者的口語描述比自動檢查值錢
 
-## 兩個真正的風險
-
-**U1：已關閉。** 共振峰合成不需要任何錄音資料，因此沒有授權問題。
-原文保留在 PLAN.md §6.1 供對照，但不再是風險。
-
-~~原本的內容~~：**Ekho 音節音檔的授權不明。**
-引擎是 GPL-2+ 沒問題，但音檔要另外從 Ekho Voice Data 下載，條款查不到明確
-說明。引擎能用不代表資料能散布。**建議繞開：自錄 1300 個音節**，授權 100%
-乾淨，而且可以刻意錄成 80 年代電子字典的音色 —— 那是產品特色，不是妥協。
-
-**U3：實驗已做，見 [docs/U3-REPORT.md](docs/U3-REPORT.md)。等使用者聽判。**
-做出來的不是拼接播放器，而是共振峰合成器 —— 因為 1980 年代的電子字典
-本來就是那樣做的（沒記憶體放 1300 段錄音）。客觀檢查（四聲曲線、時長、
-輕聲）全數通過；自然度要靠耳朵。
-
-**如果聽得下去，U1 直接消失**：不需要任何錄音，428 bytes 參數表取代
-估計 2MB 的音節庫，也就沒有授權問題。RP2040 的餘裕約 195 倍。
-
-其餘 U2 / U4–U7 見 PLAN.md §6.1。
+「只有 01 有出來」直接指出是擦音問題（01 全是 `ma`）。「`zi` `zhi` 只有
+啾啾聲，其餘正常」直接把範圍縮到噪音路徑。這兩句省下的排查時間，
+比所有自動檢查加起來還多。
 
 ---
 
-## 判斷時沒讀到的資料（重要）
-
-以下 repo 在本機**沒有 clone**，所有相關判斷都是靠其他 repo 的側面描述推論的。
-下一段對話若要深入，應該先補齊：
+## 判斷時沒讀到的資料
 
 | repo | 為什麼需要 |
 |---|---|
-| `pico_keyboard_ime_terminal`(`_usb_host`) | **必要相依** —— 注音 IME 引擎與 CJK 字型資料的正本都在這裡 |
-| `rp2040-retro-loader/HANDOVER.md` | 已 clone 但**沒讀過**。整合前應該讀，坑都記在那 |
+| `pico_keyboard_ime_terminal`(`_usb_host`) | **必要相依**，注音 IME 引擎的正本。本機還沒 clone |
+| `rp2040-retro-loader/HANDOVER.md` | 已 clone 但沒讀過。整合前應該讀 |
 | `pico_keyboard` | 鍵盤方案的前身，可能有佈線細節 |
-| `makecode_arcade_console` / `rp2040-handheld-bundle` | 相關性較低 |
 
-另外，PLAN.md 裡所有效能數字（查詢延遲 20–50ms、音節庫 2MB、字型 300KB 等）
-都是**估算，未經量測**。當作數量級參考，不要當作規格。
+---
+
+## 順手改了別的 repo
+
+`rp2040-ili9341-infones` 的 README：把 Cubic 11 的授權從含糊的
+「著作權屬於原作者」改成明確的 **SIL OFL 1.1**（上游 `ACh-K/Cubic-11`，
+衍生自 M⁺ gothic 12r），並補上「`font_cjk.h` 是衍生資料，散布時應附上
+OFL.txt」。**已 commit，未 push。**
+
+---
+
+## 文件地圖
+
+| | |
+|---|---|
+| `docs/FORMAT.md` | 字典檔格式。§3.2 的扇區二分搜尋有個容易寫錯的邊界；§8 是常用詞索引 |
+| `docs/U3-REPORT.md` | 合成器實驗。§4.5–4.7 記錄三輪聽判各抓到的 bug |
+| `docs/PLAN.md` | 原始規劃。§5 已依實作結果改寫，§6 的風險表多數已關閉 |
+| `tools/README.md` | 轉檔工具與合成器（Python） |
+| `firmware/README.md` | C 實作、比對方法、移植踩過的五個坑 |
