@@ -21,5 +21,8 @@ build/
 build_offset/
 data/
 desktop.ini
+firmware/*.exe
+firmware/*.o
+firmware/*.obj
 loader_offset/memmap_app_arduino.ld
 out/
