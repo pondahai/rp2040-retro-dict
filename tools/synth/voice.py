@@ -25,6 +25,14 @@ TARGET_RMS = 0.20     # 每個音節的目標響度
 CONSONANT_LEVEL = 0.45  # 聲母段相對母音段的響度
 SOFT_LIMIT = 0.55       # 軟限幅門檻（固定值，不隨音節浮動）
 
+# 共振器頻寬。母音要窄（共振峰才清楚），噪音要寬 —— 窄共振器打在白噪上
+# 會變成有調的鳴響，也就是「啾啾聲」。實測擦音段的頻譜平坦度只有 0.0000，
+# 而嘶聲應該在 0.1 以上。
+VOWEL_BW = (90.0, 130.0, 200.0)
+NOISE_BW = (2000.0, 6000.0, 8000.0)
+# 第一級保留辨識度（s 與 sh 的差別來自噪音峰的位置），後兩級幾乎放平。
+# 實測平坦度 0.23（正常嘶聲），而 s 與 sh 的頻譜質心仍差 2476 Hz。
+
 # (F1, F2, F3) 共振峰目標，單位 Hz。
 VOWELS = {
     "a":  (800, 1200, 2800),
@@ -233,14 +241,21 @@ def synth_syllable(base, tone, dur_ms, f0_curve, debug=None):
     else:
         track = [(noise_f or 1000, max(noise_f, 1200), 2600)] * len(pre) + track
 
+    # --- 頻寬軌跡 ---
+    # 噪音段用寬頻寬，母音段用窄頻寬。同一組共振器、不同的 Q。
+    noisy = kind in ("stop", "affricate", "fricative")
+    bw_track = [NOISE_BW if (noisy and i < len(pre)) else VOWEL_BW
+                for i in range(total)]
+
     # --- 濾波 ---
     r1, r2, r3 = Resonator(), Resonator(), Resonator()
     out = []
     for i in range(total):
         f1, f2, f3 = track[i]
-        y = r1.run(src[i], f1, 90)
-        y = r2.run(y, f2, 130)
-        y = r3.run(y, f3, 200)
+        b1, b2, b3 = bw_track[i]
+        y = r1.run(src[i], f1, b1)
+        y = r2.run(y, f2, b2)
+        y = r3.run(y, f3, b3)
         out.append(y)
 
     # --- 嘴唇輻射 ---

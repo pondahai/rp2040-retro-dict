@@ -239,6 +239,42 @@ def spectral_checks():
     return ok
 
 
+def fricative_checks():
+    """擦音必須是嘶聲，而且彼此分得開。
+
+    這條也是聽判逼出來的：噪音原本與母音共用窄頻共振器，三級串聯打在白噪上
+    變成有調的鳴響 —— 使用者聽到的「zi zhi 只有啾啾聲」就是這個。
+    頻譜平坦度量得出來：鳴響 0.0000，正常嘶聲 0.2 左右。
+    """
+    import math
+    print()
+    print("擦音檢查")
+
+    def stat(seg):
+        ps = [(f, p) for f, p in spectrum.power_spectrum(seg, voice.SR, 1024)
+              if p > 0]
+        g = math.exp(sum(math.log(p) for _f, p in ps) / len(ps))
+        a = sum(p for _f, p in ps) / len(ps)
+        cen = sum(f * p for f, p in ps) / sum(p for _f, p in ps)
+        return g / a, cen
+
+    res = {}
+    for b in ("si", "shi", "xi", "hui"):
+        smp = voice.synth_syllable(b, 1, 230, prosody.TONE_CURVES[1])
+        res[b] = stat(smp[:int(voice.SR * 0.08)])
+        print("  %-4s 平坦度 %.3f  質心 %.0f Hz" % (b, res[b][0], res[b][1]))
+
+    ok = True
+    for cond, what in (
+            (min(v[0] for v in res.values()) > 0.05,
+             "擦音是嘶聲不是鳴響（平坦度 >0.05；鳴響時是 0.0000）"),
+            (abs(res["si"][1] - res["shi"][1]) > 800,
+             "s 與 sh 的頻譜質心分得開（否則兩個音會一樣）")):
+        print(("  PASS  " if cond else "  FAIL  ") + what)
+        ok = ok and cond
+    return ok
+
+
 def loudness_checks():
     """音節之間的響度必須接近。
 
@@ -289,6 +325,7 @@ def run():
     ok = objective_checks()
     ok = spectral_checks() and ok
     ok = loudness_checks() and ok
+    ok = fricative_checks() and ok
     print()
     print("客觀部分：" + ("全部通過" if ok else "有項目失敗"))
     print()
