@@ -1,0 +1,25 @@
+# build 產物
+build/
+build_offset/
+*.uf2
+*.elf
+*.bin
+*.hex
+
+# loader_offset 生成物（依 arduino-pico 版本重跑產生）
+loader_offset/memmap_app_arduino.ld
+
+# 字典原始資料與轉檔產物（體積大，另外取得，不進版控）
+data/
+*.csv
+*.mdx
+*.7z
+
+# 語音素材
+audio/raw/
+*.wav
+
+# 作業系統
+Thumbs.db
+desktop.ini
+.DS_Store
