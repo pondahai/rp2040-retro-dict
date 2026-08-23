@@ -54,6 +54,7 @@ Ekho 引擎碼反而可以合法使用（`+` 可升到 3）。ECDICT 的 MIT 也
 | 授權 | GPL-3.0（因重用 KeyboardTester / TFT_DMA） |
 | 字典資料 | ECDICT（英漢，MIT）+ CC-CEDICT（漢英，CC-BY-SA）。**不碰商業字典** |
 | 鍵盤對照表 | 用 KeyboardTester README 的**實測真值表**，不用 `PicoApple2.ino` 的舊表 |
+| 架構 | **後台與前端嚴格分離**，後台不知道螢幕存在、可在 PC 上測。見 PLAN.md §4 |
 
 ---
 
