@@ -1,7 +1,7 @@
 # HANDOVER
 
 給下一個接手的人（或下一段對話）。日期：2026-08-23。
-最後更新：D3 定案方向 —— 16x16 2bit 字模（Noto, OFL 1.1），完整畫面預覽已產出。
+最後更新：合成器移植成 C 並與 Python 比對通過。韌體端共約 8.5KB。
 
 ---
 
@@ -21,8 +21,9 @@
 - 已 `git init`，**沒有 remote**（要推上 GitHub 需先建 repo）
 - 追蹤中：`README.md` / `HANDOVER.md` / `docs/PLAN.md` / `.gitignore`
 - `tools/` 轉檔工具與合成器（純 Python，無第三方相依）
-- `firmware/` 查詢後台的 C 實作（1444 bytes / 靜態 RAM 0），
-  `python firmware/compare.py` 會跟 Python 參考實作逐筆比對
+- `firmware/` 查詢後台 + 合成器的 C 實作（合計約 8.5KB，靜態 RAM 0）。
+  `firmware/compare.py` 與 `firmware/compare_synth.py` 會跟 Python 參考
+  實作比對，兩者都在 PC 上跑、不需要板子
 - `LICENSE` 已補上（GPL-3.0，取自 PicoApple2-KeyboardTester）
 
 ---
