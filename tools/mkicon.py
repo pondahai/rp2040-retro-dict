@@ -73,6 +73,7 @@ def verify():
 
     # 位元組順序錯了圖不會壞成馬賽克，只會整張變色 —— 所以這裡比的是
     # 「兩種順序解出來哪一種比較接近來源圖」，不是「看起來像不像圖」。
+    # 去背只換掉背景那一塊，圖示本身不動，所以這個比較仍然成立。
     ref = Image.open(SQUARE).convert("RGB").resize((W, H), Image.LANCZOS)
     swapped = Image.frombytes("RGB", (W, H), bytes(
         _decode(data, swap=True)))
@@ -118,8 +119,13 @@ def main(argv):
     sq.save(SQUARE)
     print("來源正方圖：%s（%dx%d）" % (os.path.normpath(SQUARE), *sq.size))
 
-    r = subprocess.run([sys.executable, thumb, SQUARE, "--fit", "-o", RAW],
-                       capture_output=True)
+    # 去背：來源圖是有灰底的 JPEG，載入器選單是深色的，不去背會看到一塊
+    # 灰方塊。tol 要夠大才吃得掉書本下緣的**投影** —— 投影跟灰底不同色、
+    # 也不與四角連通，tol 60 會在黑底上留下一圈鋸齒狀髒邊（實測 110 乾淨，
+    # 而且書本的深色描邊還在）。
+    r = subprocess.run([sys.executable, thumb, SQUARE, "--fit",
+                        "--drop-bg", "--drop-tol", "110", "--bg", "000000",
+                        "-o", RAW], capture_output=True)
     out = (r.stdout + r.stderr).decode("utf-8", "replace").strip()
     if out:
         print(out)

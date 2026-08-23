@@ -24,6 +24,7 @@
 #include <SD.h>
 
 #include "TFT_DMA.h"
+#include "audio.h"
 
 extern "C" {
 #include "src/rd_app.h"
@@ -31,6 +32,7 @@ extern "C" {
 #include "src/rd_fbuf.h"
 #include "src/rd_font.h"
 #include "src/rd_keys.h"
+#include "src/rd_speech.h"
 #include "src/rd_ui.h"
 }
 
@@ -47,6 +49,12 @@ extern "C" {
 #define LATCH_PIN        14
 #define CLOCK_PIN        26
 #define DATA_IN_PIN      27
+
+// ---- 喇叭 ----
+// PicoApple2 的 PIN_JACK_SND 與 InfoNES 的 audio_init(7, ...) 都是這一支。
+// PicoApple2 是 1-bit 直接翻轉 GPIO（Apple II 喇叭本來就那樣），共振峰合成
+// 需要振幅，所以走 InfoNES 那條 PWM 的路。
+#define PIN_SPEAKER      7
 
 // ---- SD 卡（spi1）----
 #define PIN_SD_CS        13
@@ -164,6 +172,46 @@ static void blit()
 
 static dict g_dict;
 static font g_font_dev;
+
+// 發音用的三塊緩衝。整段唸完的波形先收在 g_pcm，再一次交給 DMA 播 ——
+// 一個字最長 1.5 秒，邊合成邊播反而要處理 underrun，不划算。
+#define SPEAK_MAX_SEG   4000        // 單一音素上限 0.25 秒
+#define SPEAK_MAX_PCM   24000       // 整段上限 1.5 秒
+static int32_t g_syn_work[SPEAK_MAX_SEG];
+static int16_t g_syn_seg[SPEAK_MAX_SEG];
+static uint8_t g_syn_pcm8[SPEAK_MAX_SEG];
+static uint8_t g_pcm[SPEAK_MAX_PCM];
+static int g_pcm_n;
+static speech g_speech;
+
+// speech.c 一段一段吐波形，這裡接起來。滿了就丟掉尾巴 —— 寧可少唸幾個
+// 音素，也不要蓋掉 DMA 正在讀的那塊記憶體。
+static void pcm_sink(void *ctx, const uint8_t *pcm, int n)
+{
+    (void)ctx;
+    if (g_pcm_n + n > SPEAK_MAX_PCM)
+        n = SPEAK_MAX_PCM - g_pcm_n;
+    if (n <= 0)
+        return;
+    memcpy(g_pcm + g_pcm_n, pcm, (size_t)n);
+    g_pcm_n += n;
+}
+
+static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
+                     const char *fallback)
+{
+    (void)ctx;
+    audio_stop();               // 上一次還在播就打斷它
+    g_pcm_n = 0;
+    speech_init(&g_speech, pcm_sink, NULL, g_syn_work, g_syn_seg, g_syn_pcm8,
+                SPEAK_MAX_SEG);
+    if (ids && nbytes >= 2)
+        speech_ids(&g_speech, ids, nbytes, is_zh);
+    else
+        speech_spell(&g_speech, fallback);   // 查不到就逐字母唸
+    Serial.printf("speak: %d samples\n", g_pcm_n);
+    audio_play(g_pcm, g_pcm_n);
+}
 // 40KB：兩張碼位表 + 窄字前進寬度 + ASCII 字模，實測要 39,123 bytes。
 static uint8_t g_font_cache[40 * 1024];
 static ui_target g_target;
@@ -301,8 +349,11 @@ void setup()
     g_dict.read_dat = sd_read_at;
     g_dict.dat_ctx = &g_ec_dat;
 
+    audio_init(PIN_SPEAKER, SYN_SR);
+
     keys_init(&g_keys);
     app_init(&g_app, &g_dict, &g_font_dev, &g_target);
+    g_app.speak = on_speak;
     app_render(&g_app);
     blit();
 }

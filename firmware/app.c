@@ -55,6 +55,8 @@ static void refresh_cands(app *a)
         memcpy(a->cand_word[i], hits[i].key24, kl);
         a->cand_word[i][kl] = 0;
         a->cands[i].word = a->cand_word[i];
+        a->cand_off[i] = hits[i].off;
+        a->cand_len[i] = hits[i].len;
         a->cand_trans[i][0] = 0;
         a->cands[i].trans = a->cand_trans[i];
 
@@ -91,6 +93,19 @@ static int show_word(app *a, const char *word)
     copy_field(&rec, DICT_T_PHONETIC, a->ph, sizeof(a->ph), &a->entry.phonetic);
     copy_field(&rec, DICT_T_TRANS_ZH, a->zh, sizeof(a->zh), &a->entry.trans_zh);
     copy_field(&rec, DICT_T_DEF_EN, a->en, sizeof(a->en), &a->entry.def_en);
+    {
+        uint16_t n;
+        const uint8_t *p = dict_field(&rec, DICT_T_SYL_EN, &n);
+        if (!p)
+            p = dict_field(&rec, DICT_T_SYL_ZH, &n);
+        a->syl_len = 0;
+        if (p) {
+            if (n > APP_MAX_SYL)
+                n = APP_MAX_SYL & ~1u;          /* 只截在 id 邊界上 */
+            memcpy(a->syl, p, n);
+            a->syl_len = n;
+        }
+    }
     a->body_lines = ui_body_lines(a->f, &a->entry);
     a->scroll = 0;
     a->state = APP_RESULT;
@@ -105,6 +120,35 @@ void app_init(app *a, dict *d, font *f, const ui_target *t)
     a->t = t;
     a->state = APP_TYPING;
     a->dirty = 1;
+}
+
+/* 輸入畫面按 Fn+1：唸目前反白的候選詞。查無此字（沒有候選）就把打進去的
+ * 字母逐個唸出來 —— 1980 年代電子字典就是這樣處理不認得的字，而且這樣
+ * 不必把 g2p 引擎搬進韌體（FORMAT.md §4.2 的定案）。 */
+static void speak_typing(app *a)
+{
+    dict_record rec;
+    const uint8_t *syl = 0;
+    uint16_t n = 0;
+
+    if (!a->speak)
+        return;
+    if (a->cand_n && a->sel < a->cand_n &&
+        a->cand_len[a->sel] <= sizeof(a->blob) &&
+        a->d->read_dat(a->d->dat_ctx, a->cand_off[a->sel],
+                       a->cand_len[a->sel], a->blob) == 0 &&
+        dict_record_parse(a->blob, a->cand_len[a->sel], &rec) == DICT_OK) {
+        syl = dict_field(&rec, DICT_T_SYL_EN, &n);
+        if (!syl)
+            syl = dict_field(&rec, DICT_T_SYL_ZH, &n);
+    }
+    if (syl && n >= 2)
+        a->speak(a->speak_ctx, syl, n, 0,
+                 a->cand_n ? a->cand_word[a->sel] : a->typed);
+    else
+        a->speak(a->speak_ctx, 0, 0, 0,
+                 a->cand_n && a->sel < a->cand_n ? a->cand_word[a->sel]
+                                                 : a->typed);
 }
 
 static void typing_key(app *a, const key_event *ev)
@@ -130,6 +174,9 @@ static void typing_key(app *a, const key_event *ev)
     case KEY_DOWN:
         if (a->sel + 1 < a->cand_n)
             a->sel++;
+        break;
+    case KEY_F1:
+        speak_typing(a);
         break;
     case KEY_ENTER:
         /* 有選到候選就查那個，否則查打進去的字 —— 打了半個字直接按
@@ -182,7 +229,8 @@ static void result_key(app *a, const key_event *ev)
         break;
     case KEY_F1:
         if (a->speak)
-            a->speak(a->speak_ctx, a->entry.headword, a->entry.phonetic);
+            a->speak(a->speak_ctx, a->syl_len ? a->syl : 0, a->syl_len, 0,
+                     a->entry.headword);
         break;
     default:
         break;

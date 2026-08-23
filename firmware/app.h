@@ -20,6 +20,7 @@
 #define APP_MAX_CANDS 8
 #define APP_MAX_WORD  32
 #define APP_MAX_TRANS 256
+#define APP_MAX_SYL   96          /* 48 個音素，比最長的英文詞還長 */
 
 typedef enum {
     APP_TYPING = 0,
@@ -43,15 +44,22 @@ typedef struct {
     ui_cand cands[APP_MAX_CANDS];
     char cand_word[APP_MAX_CANDS][APP_MAX_WORD];
     char cand_trans[APP_MAX_CANDS][APP_MAX_TRANS];
+    uint32_t cand_off[APP_MAX_CANDS];   /* 候選詞在 .DAT 的位置，發音時才回頭讀 */
+    uint16_t cand_len[APP_MAX_CANDS];
     int  cand_n;
 
     /* 目前顯示的詞條 */
     ui_entry entry;
     char hw[64], ph[128], zh[1024], en[2048];
     int  body_lines;
+    uint8_t syl[APP_MAX_SYL];      /* 目前詞條的發音 id，原樣複製 */
+    uint16_t syl_len;
 
-    /* F1 發音。接上 synth.h 之前先留掛勾，PC 端測試也靠它看有沒有被呼叫。 */
-    void (*speak)(void *ctx, const char *word, const char *phonetic);
+    /* Fn+1 發音。這一層不合成、不碰喇叭 —— 只把「該唸什麼」交出去：
+     * ids 是 .DAT 存好的音素／音節 id（FORMAT.md §4.2），沒有的話 ids 為 NULL，
+     * 呼叫端就拿 fallback 逐字母唸。 */
+    void (*speak)(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
+                  const char *fallback);
     void *speak_ctx;
 
     /* .DAT 記錄的暫存區。放在結構裡，這一層一樣不 malloc。 */

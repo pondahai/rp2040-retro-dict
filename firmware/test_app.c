@@ -160,10 +160,17 @@ static uint32_t NOW;
 static int SNAPS;
 static int SPOKE;
 
-static void on_speak(void *ctx, const char *word, const char *phonetic)
+static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
+                     const char *fallback)
 {
     (void)ctx;
-    printf("  F1 發音：%s [%s]\n", word ? word : "", phonetic ? phonetic : "");
+    (void)is_zh;
+    if (ids && nbytes >= 2)
+        printf("  Fn+1 發音：%s（%d 個 id）\n", fallback ? fallback : "",
+               nbytes / 2);
+    else
+        printf("  Fn+1 發音：%s（沒有音素資料，逐字母唸）\n",
+               fallback ? fallback : "");
     SPOKE++;
 }
 
