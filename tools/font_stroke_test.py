@@ -103,6 +103,15 @@ def main():
         img.save(os.path.join(OUT, "stroke_12.png"))
         panels.append(label(img, "12x12  Ark Pixel"))
 
+    # Noto 光柵化到 16px + 2 bit 灰階，跟點陣字放在一起比
+    try:
+        from font_vector_test import render_noto
+        img = render_noto(16, 4, 20)
+        img.save(os.path.join(OUT, "stroke_noto16.png"))
+        panels.append(label(img, "16x16  Noto Sans TC 光柵化 + 2bit 灰階"))
+    except Exception as e:
+        print("Noto 那欄跳過：%s" % e)
+
     if panels:
         gap = 20
         w = sum(p.width for p in panels) + gap * (len(panels) - 1)
