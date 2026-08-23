@@ -1,14 +1,16 @@
 # HANDOVER
 
 給下一個接手的人（或下一段對話）。日期：2026-08-23。
-最後更新：字典檔格式定稿（docs/FORMAT.md），LICENSE 補上。
+最後更新：`tools/` PC 端轉檔工具完成（32 項自我驗證全過）。
 
 ---
 
 ## 現況一句話
 
-**只有規劃與格式規格，零程式碼。** 可行性已評估完，結論可行；
-擋住開工的字典檔格式已定稿於 [docs/FORMAT.md](docs/FORMAT.md)。
+**格式已定稿、PC 端轉檔工具已可用；韌體端仍是零程式碼。**
+格式見 [docs/FORMAT.md](docs/FORMAT.md)，工具見 [tools/README.md](tools/README.md)。
+工具用合成資料完整驗證過（`python tools/tests/test_roundtrip.py`），
+但**真實的 ECDICT / CC-CEDICT 原始檔尚未下載**，欄位與邊界情況還沒對過真資料。
 規劃全文在 [docs/PLAN.md](docs/PLAN.md) —— 動手前先讀那份，這裡只講
 「怎麼走到這一步」與「接下來從哪接」。
 
@@ -16,7 +18,7 @@
 
 - 已 `git init`，**沒有 remote**（要推上 GitHub 需先建 repo）
 - 追蹤中：`README.md` / `HANDOVER.md` / `docs/PLAN.md` / `.gitignore`
-- `tools/` 是空的（PC 端轉檔工具的預留位置，git 不追蹤空資料夾）
+- `tools/` 已有轉檔工具（純 Python，無第三方相依）
 - `LICENSE` 已補上（GPL-3.0，取自 PicoApple2-KeyboardTester）
 
 ---
@@ -78,9 +80,12 @@ Ekho 引擎碼反而可以合法使用（`+` 可升到 3）。ECDICT 的 MIT 也
 
 按優先序：
 
-1. ~~設計字典檔格式~~ **已完成** —— [docs/FORMAT.md](docs/FORMAT.md)。
-   格式定下來後，以下三件事可以**平行**做且互不阻塞（見 FORMAT.md §7）：
-   (a) `tools/` PC 端轉檔工具　(b) 查詢後台（可在 PC 上測）　(c) U3 音節實驗
+1. ~~設計字典檔格式~~ ~~`tools/` 轉檔工具~~ **兩者皆已完成**。
+   下一步二選一：
+   - **下載真實 ECDICT / CC-CEDICT 跑一次轉檔** —— 成本低、回報高。
+     會一次驗證欄位假設、量到真實體積、並由 `mkdict.py check` 的統計
+     產出「實際要錄哪些音節」的清單（比手工修音節表可靠）
+   - **U3 音節拼接實驗** —— 技術上最不確定的一項，仍不需要板子
 2. **決定 D2 / D3 / D4**（PLAN.md §6.2）—— 這三個仍卡在使用者身上
    - D2：英文合成走 SAM 還是 eSpeak-ng
    - D3：字型維持 11×11 還是升 16×16
