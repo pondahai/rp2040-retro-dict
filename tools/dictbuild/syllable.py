@@ -88,7 +88,14 @@ _EXTRA = ["yo"]
 
 
 def _build_table():
+    """回傳 (音節清單, 音節 -> (聲母, 韻母))。
+
+    第二個回傳值是給合成器用的：拼音的書寫形式會掩蓋真正的結構
+    （`you` 其實是零聲母 + iu、`ju` 的 u 其實是 ü），從拼寫倒推很容易錯。
+    生成時本來就知道答案，順手記下來比事後解析可靠。
+    """
     seen = list(_EXTRA)
+    parts = {"yo": ("", "io")}
     mark = set()
     for ini in INITIALS:
         for fin in _GROUPS[ini]:
@@ -98,11 +105,12 @@ def _build_table():
             if s not in mark:
                 mark.add(s)
                 seen.append(s)
+                parts[s] = (ini, fin)
     seen.sort()
-    return seen
+    return seen, parts
 
 
-SYLLABLES = _build_table()
+SYLLABLES, SYL_PARTS = _build_table()
 SYL_INDEX = {s: i for i, s in enumerate(SYLLABLES)}
 
 TONES = 8            # id 的低 3 bits 放聲調
