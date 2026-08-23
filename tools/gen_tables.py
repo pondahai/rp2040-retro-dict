@@ -75,14 +75,19 @@ def main():
         vidx = {n: i for i, n in enumerate(zh_vowels)}
         emit(f)
 
-        # 韻母 -> 目標序列
-        finals = sorted(voice.FINALS)
-        maxlen = max(len(voice.FINALS[k]) for k in finals)
+        # 韻母 -> 目標序列。
+        # 空韻（zi/zhi 那個不是真的 i）要在**輸出陣列之前**就併進來，
+        # 否則 SYN_ZH_PARTS 會指到陣列外面 —— 第一版就是這樣。
+        final_seq = dict(voice.FINALS)
+        final_seq["__EMPTY_z"] = "z"
+        final_seq["__EMPTY_Z"] = "Z"
+        finals = sorted(final_seq)
+        maxlen = max(len(final_seq[k]) for k in finals)
         emit(f, "#define SYN_ZH_MAX_TARGETS %d" % maxlen)
         emit(f, "/* 韻母的共振峰目標序列。0xFF 表示序列結束。 */")
         emit(f, "static const uint8_t SYN_ZH_FINAL[%d][%d] = {" % (len(finals), maxlen))
         for k in finals:
-            seq = [vidx[c] for c in voice.FINALS[k]]
+            seq = [vidx[c] for c in final_seq[k]]
             seq += [0xFF] * (maxlen - len(seq))
             emit(f, "    { %s },   /* %s */"
                  % (", ".join("0x%02X" % v for v in seq), k))
@@ -120,26 +125,17 @@ def main():
              % len(syllable.SYLLABLES))
         for s in syllable.SYLLABLES:
             ini, fin = syllable.SYL_PARTS.get(s, ("", "a"))
-            # 空韻：zi/zhi 這類的 i 不是真的 i（voice._EMPTY_RIME）
             if fin == "i" and ini in voice._EMPTY_RIME:
-                fin_name = "__EMPTY_" + voice._EMPTY_RIME[ini]
-                if fin_name not in fidx:
-                    fidx[fin_name] = len(finals)
-                    finals.append(fin_name)
+                fin = "__EMPTY_" + voice._EMPTY_RIME[ini]
+            assert fin in fidx, "韻母 %r 不在表裡" % fin
             emit(f, "    { %2d, %2d },   /* %s */"
-                 % (iidx.get(ini, 0),
-                    fidx.get(fin if not (fin == "i" and ini in voice._EMPTY_RIME)
-                             else "__EMPTY_" + voice._EMPTY_RIME[ini], 0), s))
+                 % (iidx.get(ini, 0), fidx[fin], s))
         emit(f, "};")
         emit(f)
 
-        # 空韻要補進韻母表
-        emit(f, "/* 空韻：zi/ci/si 與 zhi/chi/shi/ri 的 i 不是真的 i。")
-        emit(f, " * 漏掉這個會讓整批極常用音節消失（實測 bu4 shi4 只念得出「不」）。 */")
-        extra = [(n, voice._EMPTY_RIME_TARGET[n]) for n in ()] if False else []
-        emit(f, "static const uint8_t SYN_ZH_EMPTY_RIME[2] = { 0x%02X, 0x%02X };"
-             % (vidx["z"], vidx["Z"]))
-        emit(f, "/* 索引 0 = z/c/s，索引 1 = zh/ch/sh/r */")
+        emit(f, "/* 空韻（zi/ci/si 與 zhi/chi/shi/ri 的 i 不是真的 i）已經")
+        emit(f, " * 併進上面的韻母表，SYN_ZH_PARTS 直接指過去。漏掉這個會讓")
+        emit(f, " * 整批極常用音節消失 —— 實測 bu4 shi4 只念得出「不」。 */")
         emit(f)
 
         # 聲調
