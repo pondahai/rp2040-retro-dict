@@ -190,6 +190,83 @@ void app_init(app *a, dict *ec, dict *ce, font *f, const ui_target *t)
  *
  * 第 2 條是刻意唸「打進去的字」而不是候選詞：邊打邊唸的時候，使用者想聽的
  * 是自己正在打的東西。ids 為 NULL 就是在說「這個沒有音標，你自己想辦法」。 */
+/* 用鍵去查一筆詞條的發音 id。找不到回 0。
+ * 注音選字階段會用到：候選字是碼表來的，沒有 .DAT 位置，但**那個字本身
+ * 就是漢英字典的一筆詞條**，查它就有 SYL_ZH —— 不必為了唸一個字再帶一張
+ * 注音轉音節的表進韌體。 */
+static uint16_t syl_of_word(app *a, const char *word, int *is_zh)
+{
+    uint8_t key[DICT_MAX_KEY];
+    uint32_t klen = norm_key(a, word, key, sizeof(key));
+    dict_record rec;
+    const uint8_t *p;
+    uint16_t n = 0;
+
+    if (!klen)
+        return 0;
+    if (dict_lookup(a->d, key, klen, a->blob, sizeof(a->blob), &rec) != 1)
+        return 0;
+    p = dict_field(&rec, DICT_T_SYL_EN, &n);
+    *is_zh = 0;
+    if (!p) {
+        p = dict_field(&rec, DICT_T_SYL_ZH, &n);
+        *is_zh = 1;
+    }
+    if (!p || n < 2)
+        return 0;
+    if (n > APP_MAX_SYL)
+        n = APP_MAX_SYL & ~1u;
+    memcpy(a->syl, p, n);
+    return n;
+}
+
+/* 整串中文的發音：**逐字查**。
+ *
+ * 「大家好」不是字典裡的一筆詞條，所以查不到整串的 SYL_ZH —— 但「大」
+ * 「家」「好」各自都是。這是中文這邊對應英文字母規則的那一塊：字典裡沒有
+ * 的組合也要唸得出來，不然使用者打了三個字卻按不出聲音。
+ *
+ * 音節接起來就好，不做連音與變調 —— 三聲變調那些在轉檔期針對**詞**做過，
+ * 對臨時組出來的字串沒有依據可循。回傳 byte 數（= 音節數 x 2）。 */
+static uint16_t syl_of_text(app *a, const char *text)
+{
+    uint16_t total = 0;
+    int i = 0;
+
+    while (text[i] && total + 2 <= APP_MAX_SYL) {
+        unsigned char c = (unsigned char)text[i];
+        int len = (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2
+                  : ((c & 0xF0) == 0xE0) ? 3 : 4;
+        char ch[8];
+        uint8_t key[DICT_MAX_KEY];
+        uint32_t klen;
+        dict_record rec;
+        const uint8_t *p;
+        uint16_t n = 0;
+
+        if (len > (int)sizeof(ch) - 1)
+            break;
+        memcpy(ch, text + i, (size_t)len);
+        ch[len] = 0;
+        i += len;
+
+        klen = norm_key(a, ch, key, sizeof(key));
+        if (!klen)
+            continue;
+        if (dict_lookup(a->d, key, klen, a->blob, sizeof(a->blob), &rec) != 1)
+            continue;           /* 這個字查不到就跳過，不要整串不出聲 */
+        p = dict_field(&rec, DICT_T_SYL_ZH, &n);
+        if (!p || n < 2)
+            continue;
+        /* 一個字可能有多個音節（罕見，例如帶兒化韻），全部收下 */
+        if (total + n > APP_MAX_SYL)
+            n = (uint16_t)(APP_MAX_SYL - total);
+        memcpy(a->syl + total, p, n);
+        total = (uint16_t)(total + n);
+    }
+    return total;
+}
+
 static void speak_typing(app *a)
 {
     dict_record rec;
@@ -199,6 +276,14 @@ static void speak_typing(app *a)
 
     if (!a->speak)
         return;
+
+    /* 注音選字階段：唸目前反白的**候選字**。 */
+    if (a->dir == APP_CE && a->ime_n && a->sel < a->cand_n) {
+        uint16_t sn = syl_of_word(a, a->cand_word[a->sel], &is_zh);
+        if (sn)
+            a->speak(a->speak_ctx, a->syl, sn, is_zh, a->cand_word[a->sel]);
+        return;                 /* 查不到就安靜 —— 中文沒有字母規則可以退 */
+    }
     if (a->cand_n && a->sel < a->cand_n &&
         a->cand_len[a->sel] <= sizeof(a->blob) &&
         a->d->read_dat(a->d->dat_ctx, a->cand_off[a->sel],
@@ -208,6 +293,14 @@ static void speak_typing(app *a)
         if (!syl) {
             syl = dict_field(&rec, DICT_T_SYL_ZH, &n);
             is_zh = 1;
+        }
+    }
+    /* 中文：候選查不到就逐字唸打進去的字（見 syl_of_text）。 */
+    if (a->dir == APP_CE && (!syl || n < 2) && a->typed_len) {
+        uint16_t sn = syl_of_text(a, a->typed);
+        if (sn) {
+            a->speak(a->speak_ctx, a->syl, sn, 1, a->typed);
+            return;
         }
     }
     if (syl && n >= 2)
@@ -426,9 +519,15 @@ static void result_key(app *a, const key_event *ev)
         a->state = APP_TYPING;
         break;
     case KEY_F1:
-        if (a->speak)
-            a->speak(a->speak_ctx, a->syl_len ? a->syl : 0, a->syl_len,
-                     a->syl_is_zh, a->entry.headword);
+        if (a->speak) {
+            uint16_t n = a->syl_len;
+            int zh = a->syl_is_zh;
+            if (!n && a->dir == APP_CE && a->entry.headword) {
+                n = syl_of_text(a, a->entry.headword);   /* 逐字唸 */
+                zh = 1;
+            }
+            a->speak(a->speak_ctx, n ? a->syl : 0, n, zh, a->entry.headword);
+        }
         break;
     default:
         break;
