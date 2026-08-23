@@ -46,7 +46,9 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
 
 產出兩個檔案：`build_offset/RetroDict.ino.uf2` 給已經有載入器的板子（丟 SD 卡
 根目錄），`build_offset/RetroDict_standalone.uf2` 前面接上跳板，可以直接 USB 燒。
-腳本會跑 `loader_offset/check_flash_layout.py` —— 偏移錯了不會在編譯時報錯，
+封面圖會依**兩個 uf2 各自的名字**複製兩份 —— 載入器是把 `.uf2` 砍掉再接
+`.RAW`（`loader/thumb.c`），名字對不上就沒有封面。腳本也會跑
+`loader_offset/check_flash_layout.py` —— 偏移錯了不會在編譯時報錯，
 只會在實機上變成黑畫面，而且症狀跟「根本沒燒進去」一模一樣。選單封面圖
 `assets/RetroDict.ino.RAW` 也會一起複製過去，兩個檔案都要放 SD 卡**根目錄**。
 

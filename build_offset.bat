@@ -63,9 +63,14 @@ echo [3/3] Checking flash layout...
 python "%HERE%loader_offset\check_flash_layout.py" "%OUT_DIR%\RetroDict.ino.uf2"
 if %errorlevel% neq 0 ( echo [ERROR] Layout check failed - do not flash this file. & exit /b 1 )
 
+rem The loader derives the cover art name by chopping ".uf2" off the uf2 name
+rem and appending ".RAW" (loader/thumb.c). So every uf2 that can end up in the
+rem SD card root needs its own matching .RAW - including the standalone one,
+rem which the menu will list even though it is meant for USB flashing.
 if exist "%HERE%assets\RetroDict.ino.RAW" (
     copy /y "%HERE%assets\RetroDict.ino.RAW" "%OUT_DIR%\RetroDict.ino.RAW" >nul
-    echo Cover art copied next to the uf2 ^(loader menu^).
+    copy /y "%HERE%assets\RetroDict.ino.RAW" "%OUT_DIR%\RetroDict_standalone.RAW" >nul
+    echo Cover art copied for both uf2 names ^(loader menu^).
 ) else (
     echo [note] assets\RetroDict.ino.RAW missing - run tools\mkicon.py.
 )
@@ -88,4 +93,8 @@ echo.
 echo SUCCESS
 echo   %OUT_DIR%\RetroDict.ino.uf2          for the SD card (loader on board)
 echo   %OUT_DIR%\RetroDict_standalone.uf2   flashable over USB
-echo   %OUT_DIR%\RetroDict.ino.RAW          cover art, same SD card root
+echo   %OUT_DIR%\RetroDict.ino.RAW          cover art for RetroDict.ino.uf2
+echo   %OUT_DIR%\RetroDict_standalone.RAW   cover art for the standalone uf2
+echo.
+echo   Name rule: the loader looks for ^<uf2 name minus .uf2^>.RAW, so each uf2
+echo   needs the .RAW that matches its own name. Both are in the SD card root.
