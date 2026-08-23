@@ -239,6 +239,36 @@ def spectral_checks():
     return ok
 
 
+def loudness_checks():
+    """音節之間的響度必須接近。
+
+    這條是使用者聽判逼出來的：擦音經過高 Q 共振器後遠比濁音大（實測 zi 的
+    峰值是 ma 的 1700 倍），整個檔案照最大值正規化之後母音就聽不見了 ——
+    聽起來像「只有啾啾聲」。而全是 ma 的測試檔剛好逃過一劫，所以第一輪
+    沒發現。
+    """
+    import math
+    print()
+    print("響度一致性檢查")
+    bases = ["ma", "mo", "mi", "mu", "nv", "er", "zi", "zhi", "shi",
+             "shuo", "wo", "hui", "wen", "guo", "zhong", "ren"]
+    pk, rms = [], []
+    for b in bases:
+        smp = voice.synth_syllable(b, 1, 230, prosody.TONE_CURVES[1])
+        pk.append(max(abs(v) for v in smp))
+        rms.append(math.sqrt(sum(v * v for v in smp) / len(smp)))
+    pr, rr = max(pk) / min(pk), max(rms) / min(rms)
+    print("  峰值 最大/最小 %.2f   RMS 最大/最小 %.2f   （共 %d 個音節）"
+          % (pr, rr, len(bases)))
+    ok = True
+    for cond, what in ((rr < 2.0, "音節間 RMS 差距 <2 倍"),
+                       (pr < 3.0, "音節間峰值差距 <3 倍"),
+                       (max(pk) <= 1.0, "沒有超出 ±1.0（寫 WAV 前不會被削)")):
+        print(("  PASS  " if cond else "  FAIL  ") + what)
+        ok = ok and cond
+    return ok
+
+
 
 # ---------------------------------------------------------------------------
 
@@ -258,6 +288,7 @@ def run():
 
     ok = objective_checks()
     ok = spectral_checks() and ok
+    ok = loudness_checks() and ok
     print()
     print("客觀部分：" + ("全部通過" if ok else "有項目失敗"))
     print()

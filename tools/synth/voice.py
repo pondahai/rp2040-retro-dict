@@ -21,6 +21,9 @@ SR = 16000          # 取樣率。當年的裝置就在 8–10kHz，16k 已經�
 BASE_F0 = 110.0     # 基頻。偏低，聽起來像 80 年代的男聲合成
 GLOTTAL_BW = 100.0  # 聲門低通的頻寬（Klatt 的 RGP 慣用值）
 GLOTTAL_GAIN = 260.0  # 補回低通吃掉的音量
+TARGET_RMS = 0.20     # 每個音節的目標響度
+CONSONANT_LEVEL = 0.45  # 聲母段相對母音段的響度
+SOFT_LIMIT = 0.55       # 軟限幅門檻（固定值，不隨音節浮動）
 
 # (F1, F2, F3) 共振峰目標，單位 Hz。
 VOWELS = {
@@ -248,6 +251,46 @@ def synth_syllable(base, tone, dur_ms, f0_curve, debug=None):
         cur = out[i]
         out[i] = cur - prev
         prev = cur
+
+    # --- 響度正規化 ---
+    # Klatt 有 AV（濁音）與 AF（擦音）兩個獨立增益，我一開始省掉了，
+    # 結果噪音路徑經過高 Q 共振器後遠比濁音大：實測 zi 的峰值 512、
+    # ma 只有 0.3，**差 1700 倍**。整個檔案照最大值正規化之後，母音被壓到
+    # 聽不見，只剩噪音的啾啾聲 —— 而全是 ma 的測試檔剛好逃過一劫。
+    #
+    # 這裡改成每個音節各自正規化到一致的響度。副作用是好的：真實裝置本來
+    # 就希望每個字一樣大聲。
+    def _rms(seq):
+        if not seq:
+            return 0.0
+        return math.sqrt(sum(v * v for v in seq) / len(seq))
+
+    body_rms = _rms(out[len(pre):])
+    if body_rms > 1e-9:
+        g = TARGET_RMS / body_rms
+        for i in range(total):
+            out[i] *= g
+    pre_rms = _rms(out[:len(pre)])
+    if pre_rms > 1e-9:
+        g = (TARGET_RMS * CONSONANT_LEVEL) / pre_rms
+        for i in range(len(pre)):
+            out[i] *= g
+
+    # RMS 拉平了還不夠：**波峰因數**因音節而異。嘴唇輻射的一階差分會讓
+    # 某些母音的波形變得很尖，RMS 相同但峰值差六倍；檔案層級的峰值正規化
+    # 就又會把其他音節壓低。
+    #
+    # 用固定門檻的軟限幅，不要用相對自己的門檻（相對的跨音節等於沒作用）。
+    # 附帶好處：軟飽和的輕微失真正好是 80 年代裝置該有的音色。
+    for i in range(total):
+        out[i] = SOFT_LIMIT * math.tanh(out[i] / SOFT_LIMIT)
+
+    # 限幅會把尖的波形削掉一部分能量，所以再校一次 RMS。
+    final_rms = _rms(out)
+    if final_rms > 1e-9:
+        g = min(TARGET_RMS / final_rms, 1.0 / max(1e-9, max(abs(v) for v in out)))
+        for i in range(total):
+            out[i] *= g
 
     # --- 音量包絡 ---
     atk, rel = _ms(12), _ms(30)
