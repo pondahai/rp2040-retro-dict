@@ -23,3 +23,6 @@ audio/raw/
 Thumbs.db
 desktop.ini
 .DS_Store
+__pycache__/
+*.pyc
+out/
