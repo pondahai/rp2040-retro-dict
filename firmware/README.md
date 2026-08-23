@@ -247,3 +247,32 @@ SD 函式庫）。
 
 快取本身不需要另外測 —— `compare_ui.py` 現在就是走快取那條路，14 張畫面
 仍然逐像素相同。快取要是搬錯了一個 byte，那 14 張圖立刻會叫。
+
+---
+
+## 注音 IME 與 letter-to-sound
+
+```
+firmware/build_ime.bat  && python firmware/compare_ime.py
+firmware/build_lts.bat  && python firmware/compare_lts.py
+```
+
+兩者都是「規則／碼表寫一份，C 照抄，逐筆比對」：
+
+| | 規格 | C | 比對 |
+|---|---|---|---|
+| 注音 | `pico_keyboard_ime_terminal` 的碼表 | `ime.c` | 1360 筆音節全部 |
+| 字母發音 | `tools/synth/lts.py` | `lts.c` | 字典裡沒有音標的詞 + 打到一半的前綴 |
+
+表都是**解析產生**的（`tools/gen_ime_tables.py`、`tools/gen_lts_tables.py`），
+不是手抄 —— 那 41 組鍵位對照手抄一定會錯一兩個，而錯了不會有任何症狀，
+直到有人打到那個音。
+
+兩把尺都驗過自己：注音把二聲與四聲的鍵對調 -> 626 筆不同；LTS 把 `ch`
+規則改掉 -> 立刻不同。
+
+### 發音的優先順序
+
+有音標（`SYL_EN`）就唸音標；沒有就用 `lts.c` 的字母規則現場推；規則也推
+不出（純數字、符號）才逐字母唸。中文走 `SYL_ZH`，**那是另一套 id** ——
+餵錯合成器會唸出完全不同的東西，所以 `app.c` 要記住手上那串是哪一種。

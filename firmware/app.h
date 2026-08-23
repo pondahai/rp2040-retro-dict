@@ -72,6 +72,7 @@ typedef struct {
     int  body_lines;
     uint8_t syl[APP_MAX_SYL];      /* 目前詞條的發音 id，原樣複製 */
     uint16_t syl_len;
+    int  syl_is_zh;                /* 那串 id 是中文音節還是英文音素 */
     uint32_t idx_pos;              /* 目前詞條在主索引裡的序號 */
     int  has_pos;                  /* idx_pos 有效嗎（查不到時就沒有） */
 

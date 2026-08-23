@@ -37,6 +37,41 @@ static int emit(speech *sp, int n)
     return n;
 }
 
+/* 子音相對母音的音量（Q8）。
+ *
+ * **為什麼需要這張表**：syn_normalize() 是把「一個音素」拉到目標響度，
+ * 而我們是一個音素一個音素合成再接起來 —— 於是單獨的 /k/ 爆破音會被放大到
+ * 跟母音一樣響，`look` 的字尾聽起來像在敲東西。Python 參考版沒有這個問題，
+ * 因為它是**整詞一起**正規化，音素之間的相對響度自然保留。
+ *
+ * 正確的解法是把整詞規劃移植過來（見 HANDOVER 的待辦），在那之前這張表
+ * 用相對音量近似：塞音最小、擦音次之、鼻音與流音接近母音。
+ */
+#define G(x) ((int)((x) * 256))
+static const int16_t KIND_GAIN[] = {
+    G(1.00),      /* SYN_K_NONE：母音 */
+    G(0.30),      /* SYN_K_STOP：爆破音，就是 look 的 k */
+    G(0.45),      /* SYN_K_FRICATIVE */
+    G(0.45),      /* SYN_K_AFFRICATE */
+    G(0.75),      /* SYN_K_NASAL */
+    G(0.80),      /* SYN_K_LATERAL */
+    G(0.80),      /* SYN_K_APPROX */
+    G(0.85),      /* SYN_K_GLIDE */
+};
+#undef G
+
+static int gain_of(uint16_t ph_id)
+{
+    int idx = ph_id / 4;
+    int kind;
+    if (idx >= (int)(sizeof(SYN_EN_KIND) / sizeof(SYN_EN_KIND[0])))
+        return 256;
+    kind = SYN_EN_KIND[idx];
+    if (kind < 0 || kind >= (int)(sizeof(KIND_GAIN) / sizeof(KIND_GAIN[0])))
+        return 256;
+    return KIND_GAIN[kind];
+}
+
 static int one(speech *sp, uint16_t id, int is_zh)
 {
     int n;
@@ -47,6 +82,14 @@ static int one(speech *sp, uint16_t id, int is_zh)
               : syn_phoneme(&sp->st, id, sp->work, sp->seg, sp->max_seg);
     if (n < 0)
         return 0;            /* 不認得的 id 就跳過，不要整個詞不出聲 */
+    if (!is_zh) {
+        int g = gain_of(id);
+        if (g != 256) {
+            int i;
+            for (i = 0; i < n; i++)
+                sp->seg[i] = (int16_t)((sp->seg[i] * g) >> 8);
+        }
+    }
     return emit(sp, n);
 }
 

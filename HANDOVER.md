@@ -9,8 +9,7 @@
 
 ## 一句話
 
-**已經在真機上跑起來了**：偏移版燒進板子、SD 卡放好字典檔之後，畫面會亮、
-打字會查、候選清單會動。
+**已經在真機上跑起來了**：查英文、發音、注音打中文查漢英，都在板子上動過。
 
 第一次上機只踩到兩個問題，而且都不在硬體那一層：SD 卡的路徑（`/DICT/`）
 與**字模快取沒做**（每張畫面讀 SD 兩千多次，慢到不能用）。三段硬體膠水
@@ -35,11 +34,11 @@
 | 板子端 sketch | **已上機**：畫面、鍵盤、SD 都會動 |
 | 偏移版編譯 | 完成，`build_offset.bat`，佈局檢查通過 |
 | 選單封面圖 | 完成，`assets/RetroDict.ino.RAW`，`tools/mkicon.py` 可重產 |
-| 發音接上 UI | F1 只有掛勾，還沒接 synth.c |
+| 發音 | 完成並實機驗過：Fn+1，有音標唸音標、沒有就用字母規則現場推 |
 | CE 繁體化 | 完成：索引鍵與詞頭是繁體，簡體在 `SIMP` 欄 |
-| 中英切換 / 注音 IME | **完全沒開始** |
+| 注音 IME | 完成並實機驗過：Fn+2 切換，1360 筆碼表逐筆比對 |
 
-純 C 那幾支加起來約 **12.7 KB、靜態 RAM 0**（`-Os`、Cortex-M0+）：`dict.c` 1,444 B、
+純 C 那幾支加起來約 **12.7 KB（不含表）、靜態 RAM 0**（`-Os`、Cortex-M0+）：`dict.c` 1,444 B、
 `synth.c` 5,088 B + 參數表 1,938 B、`font.c` 997 B、`ui.c` 1,348 B、
 `keys.c` 904 B、`app.c` 1,044 B、`fbuf.c` 460 B。
 
@@ -149,11 +148,14 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
    **每個「聽不出差別」都代表一塊 `tools/synth/prosody.py` 的規則可以刪掉。**
    這是唯一還沒兌現的實驗價值，而且很便宜。
 2. **D4**：生字本／考綱篩選要不要進第一版（ECDICT 已附 `tag` 欄位）
-3. **注音 IME** —— 漢英方向的最後一塊。要先 clone `pico_keyboard_ime_terminal`
-   （本機還沒有），並且注意 RAM 只剩約 34%
-4. **F1 接上 synth.c** —— 目前 `app.c` 只有掛勾（`a->speak`），
-   還缺 PWM 輸出與把音標餵給合成器
-5. **注音 IME**：要先 clone `pico_keyboard_ime_terminal`，**本機還沒有**
+3. **整詞韻律** —— C 是逐音素接起來，Python 參考有跨音素平滑與句末降調
+   （`english.py` 的 `plan()` + `_smooth()`）。`compare_synth.py` 只比過單一
+   音素，整詞那段從來沒被驗過，聽起來就是「逐字拼」對「一句話」的差別
+4. **發音長度上限** —— 現在 1.5 秒（`SPEAK_MAX_PCM` 24,000 取樣點），
+   片語會被截掉（`kuroshio current` 1.42 秒已經貼著上限）。放寬到 2.5 秒
+   約多 16KB RAM（66% -> 73%）
+5. **簡體也能查**（可選）—— CE 現在只認繁體鍵。做法是索引加別名指向同一個
+   `.DAT` 位置（只多 32 bytes/筆），要動 `container.build()`
 
 ---
 
@@ -206,7 +208,7 @@ ECDICT 與 CC-CEDICT 挖出來的，全部寫成回歸測試：
 
 | repo | 為什麼需要 |
 |---|---|
-| `pico_keyboard_ime_terminal`(`_usb_host`) | **必要相依**，注音 IME 引擎的正本。本機還沒 clone |
+| `pico_keyboard_ime_terminal` | 注音 IME 引擎的正本。**已 clone**，碼表由 `tools/gen_ime_tables.py` 解析取用。上游沒有 LICENSE 檔、碼表出處未寫明 —— 散布前要補 |
 | `rp2040-retro-loader/HANDOVER.md` | 已 clone 但沒讀過。整合前應該讀 |
 | `pico_keyboard` | 鍵盤方案的前身，可能有佈線細節 |
 

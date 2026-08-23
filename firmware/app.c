@@ -107,9 +107,15 @@ static void show_record(app *a, const dict_record *rec_in)
     copy_field(rec, DICT_T_DEF_EN, a->en, sizeof(a->en), &a->entry.def_en);
     {
         uint16_t n;
+        /* 英文音素與中文音節是**兩套 id**，餵錯合成器會唸出完全不同的東西
+         * （中文音節 id 當成英文音素 id 用，聽起來像亂碼）。所以要記住
+         * 這一串是哪一種，不能只記內容。 */
         const uint8_t *p = dict_field(rec, DICT_T_SYL_EN, &n);
-        if (!p)
+        a->syl_is_zh = 0;
+        if (!p) {
             p = dict_field(rec, DICT_T_SYL_ZH, &n);
+            a->syl_is_zh = 1;
+        }
         a->syl_len = 0;
         if (p) {
             if (n > APP_MAX_SYL)
@@ -189,6 +195,7 @@ static void speak_typing(app *a)
     dict_record rec;
     const uint8_t *syl = 0;
     uint16_t n = 0;
+    int is_zh = 0;
 
     if (!a->speak)
         return;
@@ -198,14 +205,18 @@ static void speak_typing(app *a)
                        a->cand_len[a->sel], a->blob) == 0 &&
         dict_record_parse(a->blob, a->cand_len[a->sel], &rec) == DICT_OK) {
         syl = dict_field(&rec, DICT_T_SYL_EN, &n);
-        if (!syl)
+        if (!syl) {
             syl = dict_field(&rec, DICT_T_SYL_ZH, &n);
+            is_zh = 1;
+        }
     }
     if (syl && n >= 2)
-        a->speak(a->speak_ctx, syl, n, 0,
+        a->speak(a->speak_ctx, syl, n, is_zh,
                  a->cand_n ? a->cand_word[a->sel] : a->typed);
     else
-        a->speak(a->speak_ctx, 0, 0, 0,
+        /* 沒有發音資料時交給呼叫端。中文那邊沒有「字母規則」可以退，
+         * 呼叫端會發現字串不是 ASCII 而什麼都不唸 —— 那比亂唸好。 */
+        a->speak(a->speak_ctx, 0, 0, a->dir == APP_CE ? 1 : 0,
                  a->cand_n && a->sel < a->cand_n ? a->cand_word[a->sel]
                                                  : a->typed);
 }
@@ -416,8 +427,8 @@ static void result_key(app *a, const key_event *ev)
         break;
     case KEY_F1:
         if (a->speak)
-            a->speak(a->speak_ctx, a->syl_len ? a->syl : 0, a->syl_len, 0,
-                     a->entry.headword);
+            a->speak(a->speak_ctx, a->syl_len ? a->syl : 0, a->syl_len,
+                     a->syl_is_zh, a->entry.headword);
         break;
     default:
         break;
