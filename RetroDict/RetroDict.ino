@@ -174,14 +174,27 @@ static bool g_has_ce = false;
 static font g_font_dev;
 
 // 發音用的三塊緩衝。整段唸完的波形先收在 g_pcm，再一次交給 DMA 播 ——
-// 一個字最長 1.5 秒，邊合成邊播反而要處理 underrun，不划算。
+// 邊合成邊播反而要處理 underrun，不划算。
 // 單一音節／音素的長度上限。**不要寫死**：原本是 4000（0.25 秒），照
 // 英文音素的長度抓的，但中文三聲是 300ms、句末拉長後 345ms —— 每個三聲
 // 都被 syn_syllable() 靜靜截掉一截，沒有任何錯誤訊息，是 compare_synth.py
 // 的整串長度比對才抓到的。現在由 tools/gen_tables.py 從 prosody.py 的
 // TONE_DURATION × FINAL_LENGTHEN 算出來。
 #define SPEAK_MAX_SEG   SYN_MAX_SEG_SAMPLES
-#define SPEAK_MAX_PCM   24000       // 整段上限 1.5 秒
+// 整段發音的上限。2.5 秒 = 40,000 個取樣點（16kHz）。
+//
+// 這個數字是量出來的，不是抓的。把 ECDICT 全部 218,062 筆有音標的詞條
+// 逐筆算出發音長度，超過上限的會被 pcm_sink() 靜靜丟掉尾巴：
+//
+//     1.5 秒 -> 截掉 5,521 筆（2.53%）
+//     2.0 秒 -> 截掉   646 筆（0.30%）
+//     2.5 秒 -> 截掉    75 筆（0.034%）   <- 這裡
+//     3.0 秒 -> 截掉    13 筆
+//
+// 2.5 秒是曲線的膝點：從 1.5 秒拉到 2.5 秒少截掉 98.6% 的詞，再往上加
+// 8KB 只多救 62 筆。剩下那 75 筆是 pneumonoultramicroscopic... 之類的
+// 極端詞條，不值得為它們再吃 RAM。
+#define SPEAK_MAX_PCM   40000
 static int32_t g_syn_work[SPEAK_MAX_SEG];
 static int16_t g_syn_seg[SPEAK_MAX_SEG];
 static uint8_t g_syn_pcm8[SPEAK_MAX_SEG];
