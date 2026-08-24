@@ -8,7 +8,22 @@
 #include "hardware/clocks.h"
 #include "audio.h"
 
-#define REPETITION_RATE 4
+/* 每個樣本重複播幾個 PWM 週期。載波頻率 = SYN_SR * REPETITION_RATE，
+ * 取樣率不受影響（只是同一個樣本多寫幾次 cc）。
+ *
+ * 原本是 4 -> 載波 64kHz。那是給「PWM + RC + AB 類」的接法用的，可是這塊板子
+ * 後面接的是 class-D：它的輸入頻寬遠高於 64kHz，這條全擺幅方波會被原封不動
+ * 放大成軌到軌的開關訊號灌進喇叭。人耳聽不到，功率全部變成音圈的熱 —— 唸一個
+ * 長一點的字喇叭就發燙。而且 64kHz 會跟 class-D 自己的切換頻率（PAM8403 一類
+ * 約 250~300kHz）互調，調變器等於工作在不正常區。
+ *
+ * 改成 16 -> 載波 256kHz，移到超音波以上；喇叭本身的感抗、加上外面那級 RC
+ * 低通，都能把它擋掉得多。
+ *
+ * clock_div 會跟著變小：133MHz / 254 / 16000 / 16 = 2.04，還在合法範圍
+ * （最小 1）。REPETITION_RATE 再往上加就要重新算這個值。
+ */
+#define REPETITION_RATE 16
 
 static uint32_t single_sample = 0;
 static uint32_t *single_sample_ptr = &single_sample;
