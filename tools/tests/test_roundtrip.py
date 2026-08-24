@@ -271,6 +271,21 @@ def test_phonemes():
     check(ph(chr(0x26A) + "g'zem(p)t; eg-")[:2] == ["ih", "g"],
           "分號才是多讀音分隔符，且括號被忽略")
 
+    # 分隔符這一區踩過三次，每次都是靜默失敗，所以每條都留著
+    check(ph("'k" + chr(0xE6) + "sl. 'k" + chr(0x251) + ":sl")
+          == ["k", "ae", "s", "l"],
+          "句點加空白是分隔符（castle 曾被唸成兩次）")
+    check(len(ph(".v" + chr(0x252) + "l" + chr(0x4D9) + "'tiliti")) >= 8,
+          "單獨的句點是次重音記號，不是分隔符（volatility）")
+    check(ph("'b" + chr(0x28C) + "nd, b" + chr(0x28C) + "nt")
+          == ["b", "ah", "n", "d"],
+          "逗號加空白是分隔符（bund 曾被唸成兩次）")
+    check(len(ph(", k" + chr(0xE6) + "lis'" + chr(0x3B8) + "enik")) >= 8,
+          "開頭的逗號加空白仍是次重音，切了會整筆沒發音（callisthenic）")
+    check(ph(chr(0x251) + ": l" + chr(0x251) + ": 'k" + chr(0x251) + ":t")
+          == ["aa", "l", "aa", "k", "aa", "t"],
+          "片語的空白是詞界，不是分隔符（a la carte）")
+
     check(phoneme.decode_id(phoneme.phoneme_id("ae", 1)) == ("ae", 1),
           "音素 id 編解碼可逆")
     # 注意：拉丁字母幾乎都是合法音素，要用真的不可解析的東西測

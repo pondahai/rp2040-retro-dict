@@ -128,6 +128,24 @@ def parse(text, stats=None):
     dot = text.find(". ")
     if dot >= 0:
         text = text[:dot]
+    # 逗號**加空白**也是分隔符（bund 是 "'bʌnd, bʌnt"）。
+    #
+    # 注意這跟上面那條「逗號是次重音記號」不衝突，差別就在那個空白：
+    # `,ei bi: 'si:`（abc）與 `'mʌlti,plikәbl` 的逗號是**貼著**後面的音素的，
+    # 那是次重音；`, ` 中間有空白的才是分隔兩個讀音。
+    #
+    # 全部 2,623 筆含「, 」的裡面，逐筆看過，真正是「一個字被誤植的空白
+    # 切開」的只有約 10 筆（hypoploid `haipə, plɔid`、underbright、
+    # rotameter、pseudocoele 這類複合詞）。切了會修好 2,613 筆、弄壞 10 筆
+    # ——260:1，值得。那 10 筆會少唸後半段，不會唸錯。
+    #
+    # **從索引 1 開始找，不能從 0。** 有 29 筆音標長成 ", kælis'θenik" ——
+    # 開頭的次重音逗號後面多打了一個空格。從 0 找會切出空字串，那 29 筆
+    # 就整筆沒有發音了（而且不會有任何錯誤訊息）。這正是上面那段註解講的
+    # 失敗模式，只是這次是被空格觸發的。
+    comma = text.find(", ", 1)
+    if comma >= 0:
+        text = text[:comma]
     text = text.strip("'\"")
     out = []
     stress = 0
