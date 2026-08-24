@@ -72,13 +72,32 @@ static int gain_of(uint16_t ph_id)
     return KIND_GAIN[kind];
 }
 
-static int one(speech *sp, uint16_t id, int is_zh)
+/* 音節之間的靜音。U3 聽判判定 04（有間隙）比 03（連續）像中文，
+ * 所以這是預設行為而不是選項。長度由 tools/synth/prosody.py 的 GAP_MS
+ * 產生（synth_tables.h），兩邊不會各說各話。 */
+static void emit_gap(speech *sp, int ms)
+{
+    int n = syn_ms(ms);
+    while (n > 0) {
+        int k = n > sp->max_seg ? sp->max_seg : n;
+        int i;
+        for (i = 0; i < k; i++)
+            sp->pcm[i] = 128;        /* 8-bit 無號的零位 */
+        if (sp->sink)
+            sp->sink(sp->ctx, sp->pcm, k);
+        sp->samples += k;
+        n -= k;
+    }
+}
+
+static int one(speech *sp, uint16_t id, int is_zh, int prev_tone, int is_final)
 {
     int n;
     /* 每個音素／音節各自從乾淨的狀態開始 —— 與 Python 參考實作一致
      * （firmware/compare_synth.py 就是這樣比的）。 */
     syn_init(&sp->st, 12345u);
-    n = is_zh ? syn_syllable(&sp->st, id, sp->work, sp->seg, sp->max_seg)
+    n = is_zh ? syn_syllable_ctx(&sp->st, id, prev_tone, is_final,
+                                 sp->work, sp->seg, sp->max_seg)
               : syn_phoneme(&sp->st, id, sp->work, sp->seg, sp->max_seg);
     if (n < 0)
         return 0;            /* 不認得的 id 就跳過，不要整個詞不出聲 */
@@ -95,12 +114,28 @@ static int one(speech *sp, uint16_t id, int is_zh)
 
 int speech_ids(speech *sp, const uint8_t *ids, int nbytes, int is_zh)
 {
-    int i;
+    int i, last;
+    int prev_tone = SYN_TONE_NONE;
+
     sp->samples = 0;
     if (!ids || nbytes < 2)
         return 0;
-    for (i = 0; i + 1 < nbytes; i += 2)
-        one(sp, (uint16_t)(ids[i] | (ids[i + 1] << 8)), is_zh);
+
+    last = ((nbytes / 2) - 1) * 2;
+    for (i = 0; i + 1 < nbytes; i += 2) {
+        uint16_t id = (uint16_t)(ids[i] | (ids[i + 1] << 8));
+        int is_final = (i == last);
+        one(sp, id, is_zh, prev_tone, is_final);
+        if (is_zh) {
+            int tone = id % 8;
+            /* 輕聲不改變脈絡：「本子」的子看的是「本」。與 prosody.py
+             * 的 plan() 同一條（prev_tone = tone if tone else prev_tone）。 */
+            if (tone != 0)
+                prev_tone = tone;
+            if (!is_final && SYN_GAP_MS > 0)
+                emit_gap(sp, SYN_GAP_MS);
+        }
+    }
     return sp->samples;
 }
 
@@ -114,7 +149,7 @@ int speech_letters(speech *sp, const char *ascii)
         return 0;
     n = lts_to_ids(ascii, ids, (int)(sizeof(ids) / sizeof(ids[0])));
     for (i = 0; i < n; i++)
-        one(sp, ids[i], 0);
+        one(sp, ids[i], 0, SYN_TONE_NONE, 0);
     return sp->samples;
 }
 
@@ -136,7 +171,7 @@ int speech_spell(speech *sp, const char *ascii)
         else
             continue;        /* 標點與空白不唸 */
         for (k = 0; k < SPELL_MAX_PH && SPELL_IDS[row][k]; k++)
-            one(sp, SPELL_IDS[row][k], 0);
+            one(sp, SPELL_IDS[row][k], 0, SYN_TONE_NONE, 0);
     }
     return sp->samples;
 }

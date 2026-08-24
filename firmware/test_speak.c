@@ -17,7 +17,9 @@
 #include "speech.h"
 
 #define MAXSAMP 400000
-#define MAXSEG  8000          /* 單一音素／音節的長度上限（0.5 秒） */
+/* 單一音素／音節的長度上限。板子上是 SYN_MAX_SEG_SAMPLES，這裡取一樣的
+ * 值 —— 這支測試程式比板子寬鬆的話，截斷的 bug 就只會在板子上出現。 */
+#define MAXSEG  SYN_MAX_SEG_SAMPLES
 
 typedef struct { FILE *f; } file_ctx;
 

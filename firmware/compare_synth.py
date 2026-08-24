@@ -160,6 +160,80 @@ def zh_ids(text):
     return list(struct.unpack("<%dH" % (len(blob) // 2), blob))
 
 
+def plan_of(ids):
+    """音節 id 串 -> prosody.plan() 的輸出。兩邊吃的是同一組 id，
+    所以「C 跟 Python 對不對得上」不會被拼音解析的差異汙染。"""
+    sylls = [syllable.decode_id(i) for i in ids]
+    sylls = [(base, tone) for base, tone in sylls]
+    return prosody.plan(sylls)
+
+
+def py_render(ids):
+    out = []
+    for base, tone, dur, curve, gap in plan_of(ids):
+        out += voice.synth_syllable(base, tone, dur, curve)
+        if gap:
+            out += [0.0] * int(voice.SR * gap / 1000.0)
+    return out
+
+
+def compare_word(label, text):
+    """整串比對：驗的是**跨音節那一層**（音節間隙、輕聲看前字、句末拉長），
+    不是合成器本身。
+
+    這裡不比波形相關，理由要寫清楚免得下次有人以為漏了：C 端是一個音節
+    一個音節各自 syn_normalize()，Python 端 to_int16() 是整串一起抓峰值 ——
+    兩邊的響度基準本來就不同，相關係數低不代表有 bug。長度、間隙位置、
+    輕聲音高才是這一層真正決定的東西。
+    """
+    ids = zh_ids(text)
+    if not ids:
+        return
+    c = run_c("zhw", ids)
+    py = py_render(ids)
+    if len(c) != len(py):
+        fail("%s: 整串長度不一致" % label,
+             "C=%d Python=%d（差 %d 個取樣點）" % (len(c), len(py), len(c) - len(py)))
+        return
+
+    # 間隙真的是靜音嗎。長度對得上但間隙被填了聲音的話，上面那關照樣會過。
+    pos, bad = 0, 0
+    for base, tone, dur, curve, gap in plan_of(ids):
+        pos += len(voice.synth_syllable(base, tone, dur, curve))
+        n = int(voice.SR * gap / 1000.0)
+        if n:
+            seg = c[pos:pos + n]
+            if any(abs(v) > 256 for v in seg):
+                bad += 1
+            pos += n
+    if bad:
+        fail("%s: 間隙不是靜音" % label, "%d 段間隙裡有波形" % bad)
+        return
+
+    ngap = sum(1 for _, _, _, _, g in plan_of(ids) if g)
+    print("  %-20s 長度 %5d  音節 %d  間隙 %d 段（皆靜音）  OK"
+          % (label, len(c), len(ids), ngap))
+
+
+def check_neutral_context():
+    """U3 聽判選了 07（輕聲看前字）而不是 08（一律等高）。這一項就是驗
+    那條規則真的進了 C：同一個輕聲「子」，前面是三聲與前面是四聲，
+    音高必須不同 —— 相同就代表 syn_syllable_ctx() 的 prev_tone 沒接上。"""
+    a = zh_ids("ben3 zi5")
+    b = zh_ids("mao4 zi5")
+    if not a or not b:
+        return
+    ca, cb = run_c("zhw", a), run_c("zhw", b)
+    # 輕聲落在最後一個音節，取它的中段測音高
+    fa = pitch_at(ca, (len(ca) / voice.SR * 1000.0) - 60)
+    fb = pitch_at(cb, (len(cb) / voice.SR * 1000.0) - 60)
+    if fa and fb and abs(fa - fb) < 3:
+        fail("輕聲看前字（07）", "本子=%.0fHz 帽子=%.0fHz，幾乎一樣" % (fa, fb))
+    else:
+        print("  %-20s 本子 %.0fHz vs 帽子 %.0fHz（三聲後高、四聲後低）  OK"
+              % ("輕聲看前字", fa or 0, fb or 0))
+
+
 def main():
     if not os.path.exists(EXE):
         print("找不到 %s —— 先跑 firmware/build_synth.bat" % EXE)
@@ -192,6 +266,16 @@ def main():
         compare("%s%s (id=%d)" % (ph, "*" * stress, pid),
                 run_c("en", [pid]), py,
                 skip_ms=0, noisy=noisy)
+
+    print()
+    print("整串（C 的 speech_ids vs Python 的 prosody.plan）")
+    for label, text in (("你好", "ni3 hao3"),
+                        ("中國人", "zhong1 guo2 ren2"),
+                        ("本子", "ben3 zi5"),
+                        ("帽子", "mao4 zi5"),
+                        ("我是中國人", "wo3 shi4 zhong1 guo2 ren2")):
+        compare_word(label, text)
+    check_neutral_context()
 
     print()
     if FAILS:

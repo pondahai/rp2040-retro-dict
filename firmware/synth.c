@@ -246,10 +246,10 @@ static void lerp3(uint16_t *dst, const uint16_t *a, const uint16_t *b,
         dst[i] = (uint16_t)(a[i] + (int32_t)(b[i] - a[i]) * num / den);
 }
 
-static int tone_f0_q8(int tone, int pos_q8)
+/* 聲調曲線不再直接從 SYN_TONE_CURVE 取 —— 輕聲要用前一個字算出來的
+ * 臨時曲線覆蓋（見 syn_syllable_ctx），所以這裡收的是曲線本身。 */
+static int tone_f0_q8(const uint16_t (*curve)[2], int npts, int pos_q8)
 {
-    const uint16_t (*curve)[2] = SYN_TONE_CURVE[tone];
-    int npts = SYN_TONE_NPTS[tone];
     int i;
     int32_t mult;
 
@@ -277,15 +277,55 @@ static int tone_f0_q8(int tone, int pos_q8)
 int syn_syllable(syn_state *s, uint16_t syl_id,
                  int32_t *work, int16_t *out, int max_out)
 {
+    /* 沒有脈絡的單音節：輕聲照原樣唸、不做句末拉長。這是
+     * compare_synth.py 逐音節比對走的路徑，行為與移植前完全相同。 */
+    return syn_syllable_ctx(s, syl_id, SYN_TONE_RAW, 0,
+                            work, out, max_out);
+}
+
+int syn_syllable_ctx(syn_state *s, uint16_t syl_id, int prev_tone, int is_final,
+                     int32_t *work, int16_t *out, int max_out)
+{
     int base = syl_id / 8, tone = syl_id % 8;
     int ini, fin, kind, noise_f, asp;
     const uint8_t *seq;
     int ntargets = 0, i;
     int pre_len = 0, body_n, total, written = 0;
+    int dur_ms, npts;
+    const uint16_t (*curve)[2];
+    uint16_t neutral_curve[SYN_TONE_MAX_PTS][2];
     syn_frame fr;
 
     if (base >= SYN_ZH_SYLLABLES || tone > 4)
         return -1;
+
+    curve = SYN_TONE_CURVE[tone];
+    npts = SYN_TONE_NPTS[tone];
+    dur_ms = SYN_TONE_DUR[tone];
+
+    /* --- 輕聲：音高由前一個字決定 --- */
+    if (tone == 0 && prev_tone != SYN_TONE_RAW) {
+        if (prev_tone < 0 || prev_tone > 4) {
+            /* 輕聲不該出現在句首。真的出現就當成半上 —— 與
+             * tools/synth/prosody.py 的 plan() 同一條規則。 */
+            curve = SYN_TONE_CURVE[3];
+            npts = SYN_TONE_NPTS[3];
+            dur_ms = SYN_TONE_DUR[3];
+        } else {
+            /* 兩點的平緩下滑：起點比終點高 0.06 個倍率（Q8 是 15）。 */
+            int lvl = SYN_NEUTRAL_AFTER_Q8[prev_tone];
+            neutral_curve[0][0] = 0;
+            neutral_curve[0][1] = (uint16_t)(lvl + 15);
+            neutral_curve[1][0] = 256;
+            neutral_curve[1][1] = (uint16_t)lvl;
+            curve = (const uint16_t (*)[2])neutral_curve;
+            npts = 2;
+        }
+    }
+
+    /* --- 句末拉長 --- */
+    if (is_final)
+        dur_ms = dur_ms * SYN_FINAL_LENGTHEN_PCT / 100;
     ini = SYN_ZH_PARTS[base][0];
     fin = SYN_ZH_PARTS[base][1];
     kind = SYN_ZH_INI_KIND[ini];
@@ -346,14 +386,14 @@ int syn_syllable(syn_state *s, uint16_t syl_id,
 
         /* 聲調曲線的位置是**相對整個音節**的比例，不是相對聲母段。
          * 第一版拿 i/pre_len 再除 4 去近似，數值剛好接近但邏輯是錯的。 */
-        body_n = syn_ms(SYN_TONE_DUR[tone]) - pre_len;
+        body_n = syn_ms(dur_ms) - pre_len;
         if (body_n < syn_ms(60))
             body_n = syn_ms(60);
         total = pre_len + body_n;
 
         for (i = 0; i < pre_len && written < max_out; i++) {
             fr.f0_q8 = (uint16_t)tone_f0_q8(
-                tone, (int)((int64_t)i * 256 / total));
+                curve, npts, (int)((int64_t)i * 256 / total));
             fr.silent = (i < closure && kind != SYN_K_NASAL &&
                          kind != SYN_K_LATERAL && kind != SYN_K_APPROX &&
                          kind != SYN_K_NONE) ? 1 : 0;
@@ -388,7 +428,7 @@ int syn_syllable(syn_state *s, uint16_t syl_id,
             lerp3(fr.f, SYN_ZH_VOWEL[seq[k]], SYN_ZH_VOWEL[seq[k + 1]],
                   ts, 1024);
         }
-        fr.f0_q8 = (uint16_t)tone_f0_q8(tone,
+        fr.f0_q8 = (uint16_t)tone_f0_q8(curve, npts,
                                         (int)((int64_t)(pre_len + i) * 256 / total));
         written += syn_render(s, &fr, 1, work + written, max_out - written);
     }

@@ -555,6 +555,9 @@ static const uint16_t SYN_TONE_CURVE[5][4][2] = {
 };
 static const uint16_t SYN_TONE_DUR[5] = { 120, 230, 240, 300, 200 };
 static const uint16_t SYN_NEUTRAL_AFTER_Q8[5] = { 154, 154, 159, 192, 115 };
+#define SYN_FINAL_LENGTHEN_PCT 115
+#define SYN_GAP_MS 60
+#define SYN_MAX_SEG_SAMPLES 5584
 
 /* --- 英文 --- */
 #define SYN_EN_PHONEMES 43

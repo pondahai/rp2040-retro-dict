@@ -35,7 +35,9 @@ TONE_DURATION = {1: 230, 2: 240, 3: 300, 4: 200, 0: 120}
 NEUTRAL_AFTER = {1: 0.60, 2: 0.62, 3: 0.75, 4: 0.45, 0: 0.60}
 
 FINAL_LENGTHEN = 1.15   # 句末音節拉長
-GAP_MS = 0              # 音節之間的靜音。0 = 連續，見 experiment.py 的對照組
+GAP_MS = 60             # 音節之間的靜音。U3 聽判結論：03（連續）vs 04（60ms）
+                        # 聽得出差別，而且有間隙比較像中文，所以 04 成為預設。
+                        # experiment.py 仍保留 0 的對照組，要再聽一次就改那裡。
 
 
 def plan(syllables, gap_ms=GAP_MS, final_lengthen=FINAL_LENGTHEN,

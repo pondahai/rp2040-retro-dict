@@ -156,6 +156,20 @@ def main():
              % ", ".join(str(prosody.TONE_DURATION[t]) for t in (0, 1, 2, 3, 4)))
         emit(f, "static const uint16_t SYN_NEUTRAL_AFTER_Q8[5] = { %s };"
              % ", ".join(str(q(prosody.NEUTRAL_AFTER[t], 8)) for t in (0, 1, 2, 3, 4)))
+        # 跨音節的兩條：句末拉長與音節間隙。韌體端在 speech.c/synth.c 用，
+        # 百分比而不是 Q8 —— 這樣 C 的整數除法跟 Python 的 int(dur*1.15)
+        # 逐格對得上，比對測試才不會差一個取樣點。
+        emit(f, "#define SYN_FINAL_LENGTHEN_PCT %d"
+             % int(round(prosody.FINAL_LENGTHEN * 100)))
+        emit(f, "#define SYN_GAP_MS %d" % prosody.GAP_MS)
+        # 單一音節的取樣點上限。**這個一定要由表算出來，不能手寫**：
+        # 原本韌體寫死 4000（0.25 秒），是照「音素」的長度抓的，可是中文
+        # 三聲就有 300ms，句末拉長後 345ms —— 於是每個三聲都被 syn_syllable()
+        # 靜靜截掉一截，沒有任何錯誤訊息。整串比對長度才抓得到。
+        longest_ms = int(max(prosody.TONE_DURATION.values())
+                         * prosody.FINAL_LENGTHEN)
+        emit(f, "#define SYN_MAX_SEG_SAMPLES %d"
+             % (-(-longest_ms * voice.SR // 1000) + 64))
         emit(f)
 
         # ---- 英文 ----

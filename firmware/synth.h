@@ -62,6 +62,24 @@ void syn_normalize(const int32_t *in, int n, int pre_len,
 int syn_syllable(syn_state *s, uint16_t syl_id,
                  int32_t *work, int16_t *out, int max_out);
 
+/* prev_tone 的兩個特殊值。差別只在輕聲身上，但差很多：
+ *   SYN_TONE_NONE  句首。輕聲不該出現在句首，真的出現就退回半上（三聲）。
+ *   SYN_TONE_RAW   沒有脈絡這回事，照 SYN_TONE_CURVE[0] 原樣唸。
+ * 分開是必要的：compare_synth.py 逐音節比對時，Python 端拿的就是原樣的
+ * 聲調 0 曲線與時長，用 NONE 會變成 300ms 的半上、跟參考差 2880 個取樣點。 */
+#define SYN_TONE_NONE (-1)
+#define SYN_TONE_RAW  (-2)
+
+/* 同上，但帶跨音節的脈絡：
+ *   prev_tone  前一個字的調類（0..4），句首傳 SYN_TONE_NONE
+ *   is_final   是不是整串的最後一個音節（要拉長 SYN_FINAL_LENGTHEN_PCT%）
+ *
+ * 為什麼要多一支：輕聲的實際音高取決於前字、句末音節要拉長 —— 這兩條都
+ * 跨越單一音節，syn_syllable() 看不到。移植自 tools/synth/prosody.py 的
+ * plan()，U3 聽判判定 07（看前字）比 08（一律等高）好，所以要做。 */
+int syn_syllable_ctx(syn_state *s, uint16_t syl_id, int prev_tone, int is_final,
+                     int32_t *work, int16_t *out, int max_out);
+
 /* --- 英文 --- */
 /* 一個音素 id（.DAT 的 SYL_EN 內容）。 */
 int syn_phoneme(syn_state *s, uint16_t ph_id,
