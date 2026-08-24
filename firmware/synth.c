@@ -615,18 +615,38 @@ int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, syn_en_ctx *ctx,
         fr.f0_q8 = (uint16_t)(f0_q8 > 0 ? f0_q8 : SYN_BASE_F0_Q8);
         for (i = 0; i < dur && written < max_out; i++) {
             fr.silent = (noisy && i < closure) ? 1 : 0;
-            smooth_in(&fr, ctx, i, smooth_n);
+            /* 噪音段不滑入：同樣的理由反過來。母音的共振峰滑進 /s/ 的
+             * 噪音頻帶，會讓擦音起頭變成低頻的隆隆聲而不是嘶聲 ——
+             * 實測 mass 的 /s/ 起頭 1.5kHz 以下能量從 3.2% 變成 63.1%。 */
+            if (!noisy)
+                smooth_in(&fr, ctx, i, smooth_n);
             written += syn_render(s, &fr, 1, work + written, max_out - written);
         }
     }
 
     /* 記下收尾的共振峰給下一個音素滑進來。fr.f 在兩條路徑走完之後都
-     * 停在這個音素的終點值（母音是雙母音的第二個目標，子音是它自己）。 */
+     * 停在這個音素的終點值（母音是雙母音的第二個目標，子音是它自己）。
+     *
+     * **噪音類的子音兩個方向都不參與平滑**（滑出見這裡，滑入見上面的
+     * `if (!noisy)`）。塞音／擦音／塞擦音的 fr.f 不是聲道共振峰，
+     * 是噪音頻帶的中心（/s/ 是 5000Hz）—— 那不是「發音器官在哪裡」，沒有
+     * 連續性可言。把它當共振峰滑進下一個母音，等於叫一個窄頻寬（母音的
+     * bw）、有聲激發的共振器從 5kHz 掃到 700Hz —— 那就是一聲下滑的哨音。
+     *
+     * 實機症狀：sad 的 æ 起頭 16ms 內 2.5kHz 以上的能量從 0.1% 衝到 75.9%，
+     * 而字首的 æ（apple）沒事，因為字首沒有前一個音素可滑。 */
     if (ctx) {
-        ctx->last_f[0] = fr.f[0];
-        ctx->last_f[1] = fr.f[1];
-        ctx->last_f[2] = fr.f[2];
-        ctx->has_last = 1;
+        int noisy_tail = (kind == SYN_K_STOP || kind == SYN_K_AFFRICATE ||
+                          kind == SYN_K_FRICATIVE) &&
+                         !SYN_EN_IS_VOWEL[idx] && SYN_EN_DIPH[idx][0] == 0xFF;
+        if (noisy_tail) {
+            ctx->has_last = 0;      /* 下一個音素從自己的共振峰起頭 */
+        } else {
+            ctx->last_f[0] = fr.f[0];
+            ctx->last_f[1] = fr.f[1];
+            ctx->last_f[2] = fr.f[2];
+            ctx->has_last = 1;
+        }
     }
 
     syn_normalize(work, written, pre_len,

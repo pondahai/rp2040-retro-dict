@@ -109,7 +109,9 @@ def canonicalize(text):
 def parse(text, stats=None):
     """音標字串 -> [(音素, 重音)]。重音：0 無、1 主、2 次。
 
-    多讀音（逗號分隔）只取第一個 —— 字典要念一個音，不是念一串選項。
+    多讀音只取第一個 —— 字典要念一個音，不是念一串選項。分隔符是分號、
+    或「句點加空白」；**逗號與單獨的句點都是次重音記號，不是分隔符**，
+    細節見底下兩段註解。
     """
     text = canonicalize(text.strip())
     # 只有分號分隔多個讀音（-exempt 是 "...; eg-"）。
@@ -118,6 +120,14 @@ def parse(text, stats=None):
     # 15%），而且沒有任何錯誤訊息。
     if ";" in text:
         text = text.split(";")[0]
+    # 句點也會分隔多讀音（castle 是 "'kæsl. 'kɑ:sl"，美式在前英式在後）。
+    # **但只有「句點後面接空白」才算分隔符** —— 單獨的句點是次重音記號，
+    # 跟逗號一樣：`.vɒlә'tiliti`、`'skrʌb.wumәn` 都是這種。全部 218,065 筆
+    # 有音標的裡面，含句點的有 7,181 筆，其中真正是分隔符的只有 169 筆。
+    # 拿 "." 去 split 會把另外 7,012 筆的第一個音節整個砍掉。
+    dot = text.find(". ")
+    if dot >= 0:
+        text = text[:dot]
     text = text.strip("'\"")
     out = []
     stress = 0
