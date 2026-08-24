@@ -195,6 +195,21 @@ static font g_font_dev;
 // 8KB 只多救 62 筆。剩下那 75 筆是 pneumonoultramicroscopic... 之類的
 // 極端詞條，不值得為它們再吃 RAM。
 #define SPEAK_MAX_PCM   40000
+
+// 播放增益（8.8 定點，256 = 1.0）。
+//
+// 合成器刻意留了餘裕：voice.py 的 TARGET_RMS 是 0.20、SOFT_LIMIT 0.55，
+// 所以波形的峰值只用掉 PWM 可用擺幅的一半左右。實測 200 個常用英文詞
+// 加 12 句中文，峰值中位數 62、**最大 70**（滿刻度是 ±126）—— 軟限幅把
+// 峰值壓得很集中，所以餘裕是可預測的，不是碰運氣。
+//
+// 1.7 倍 -> 最大 119/126，留 6% 邊際。2.0 倍就會削波（140/126）。
+//
+// 為什麼加在這裡而不是調 voice.py 的 TARGET_RMS：那兩個常數是 U3 聽判
+// 期間用耳朵調出來的，決定的是「子音相對母音多大聲」這種內部平衡。
+// 這裡要的是整體播放音量，是播放層的事，不該回頭動合成器的配方。
+// 混音器出口有 0..255 的箝位（audio.c），所以萬一削波也只會削平不會繞回。
+#define SPEAK_VOLUME    435         // 256 * 1.7
 static int32_t g_syn_work[SPEAK_MAX_SEG];
 static int16_t g_syn_seg[SPEAK_MAX_SEG];
 static uint8_t g_syn_pcm8[SPEAK_MAX_SEG];
@@ -243,6 +258,8 @@ static void tone(int hz, int ms)
     g_pcm_n = n;
     speak_stop();
     g_speak_src = audio_play_once(g_pcm, n);
+    if (g_speak_src >= 0)
+        audio_source_set_volume(g_speak_src, SPEAK_VOLUME);
 }
 
 static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
@@ -268,6 +285,8 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
         return;
     }
     g_speak_src = audio_play_once(g_pcm, g_pcm_n);
+    if (g_speak_src >= 0)
+        audio_source_set_volume(g_speak_src, SPEAK_VOLUME);
     g_app.speaking = 1;
     refresh_status();
 }
