@@ -95,11 +95,6 @@ int syn_en_is_vowel(uint16_t ph_id);
  * decl_q8 是降調倍率，256 = 不降。 */
 int syn_en_f0_q8(uint16_t ph_id, int decl_q8);
 
-/* 同 syn_phoneme()，但基頻由呼叫端指定（0 = 照原本的算法）。
- * 句末降調是跨音素的：一個音素看不到自己在詞裡的第幾個母音。 */
-int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, int f0_q8,
-                    int32_t *work, int16_t *out, int max_out);
-
 /* 句末降調的狀態機。
  *
  * Python 參考實作（english.py 的 plan()）是整個詞先攤成段清單再算，因為
@@ -114,15 +109,30 @@ typedef struct {
     int n_vowels;
     int seen;
     int carry_f0_q8;
+    /* 跨音素平滑用：前一個音素結束時的共振峰。has_last=0 表示這是詞首，
+     * 沒有東西可以滑進來。 */
+    uint16_t last_f[3];
+    int has_last;
+    int smooth_ms;          /* 0 = 不平滑。預設 SYN_EN_SMOOTH_MS */
 } syn_en_ctx;
 
 void syn_en_ctx_init(syn_en_ctx *c, int n_vowels);
+
+/* 改變之後 syn_en_ctx_init() 用的平滑視窗。只給測試程式做 A/B 用 ——
+ * 韌體不呼叫它，所以預設值就是 SYN_EN_SMOOTH_MS。 */
+void syn_en_set_smoothing(int ms);
 
 /* 這個音素該用的基頻（Q8）。母音會順便把狀態往前推一格。 */
 int syn_en_ctx_f0(syn_en_ctx *c, uint16_t ph_id);
 
 /* 前掃：一串音素 id 裡有幾個母音。 */
 int syn_en_count_vowels(const uint16_t *ids, int n);
+
+/* 同 syn_phoneme()，但帶跨音素的脈絡（句末降調 + 共振峰平滑）。
+ * ctx 傳 NULL 就等於 syn_phoneme()。ctx 會被就地更新。 */
+int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, syn_en_ctx *ctx,
+                    int32_t *work, int16_t *out, int max_out);
+
 
 /* --- 工具 --- */
 int syn_ms(int ms);              /* 毫秒 -> 取樣點數 */

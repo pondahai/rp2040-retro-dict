@@ -464,10 +464,21 @@ int syn_en_f0_q8(uint16_t ph_id, int decl_q8)
     return (int)f0;
 }
 
+/* 只給測試程式做 A/B 用；韌體從來不改它。 */
+static int g_smooth_ms = SYN_EN_SMOOTH_MS;
+
+void syn_en_set_smoothing(int ms)
+{
+    g_smooth_ms = ms < 0 ? 0 : ms;
+}
+
 void syn_en_ctx_init(syn_en_ctx *c, int n_vowels)
 {
     c->n_vowels = n_vowels;
     c->seen = 0;
+    c->last_f[0] = c->last_f[1] = c->last_f[2] = 0;
+    c->has_last = 0;
+    c->smooth_ms = g_smooth_ms;
     /* 詞首的子音還沒有母音可以沿用，用基準基頻 —— 對應 Python
      * english.py synth() 裡 last_f0 的初值 BASE_LEVEL。 */
     c->carry_f0_q8 = SYN_BASE_F0_Q8;
@@ -499,15 +510,36 @@ int syn_en_count_vowels(const uint16_t *ids, int n)
 int syn_phoneme(syn_state *s, uint16_t ph_id,
                 int32_t *work, int16_t *out, int max_out)
 {
-    /* 沒有脈絡：不降調，非母音用基準基頻。與移植前完全相同。 */
-    return syn_phoneme_ctx(s, ph_id, 0, work, out, max_out);
+    /* 沒有脈絡：不降調、不平滑。與移植前完全相同。 */
+    return syn_phoneme_ctx(s, ph_id, NULL, work, out, max_out);
 }
 
-int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, int f0_q8,
+/* 音素開頭的共振峰平滑。
+ *
+ * Python 是對整條軌跡做置中的移動平均，前後各一半都會被改到。串流架構
+ * 做不到「往回改」—— 前一個音素早就送出去了。這裡改成只在**開頭**
+ * smooth_n 個取樣點，從前一個音素的收尾共振峰滑進來，用的是跟母音段
+ * 一樣的 smoothstep。消掉邊界跳變的目的相同，數字不會一樣。 */
+static void smooth_in(syn_frame *fr, const syn_en_ctx *ctx, int i, int smooth_n)
+{
+    int32_t t, ts;
+    int k;
+    if (!ctx || !ctx->has_last || i >= smooth_n || smooth_n <= 0)
+        return;
+    t = (int32_t)i * 1024 / smooth_n;
+    ts = (int32_t)(((int64_t)t * t * (3 * 1024 - 2 * t)) >> 20);
+    for (k = 0; k < 3; k++)
+        fr->f[k] = (uint16_t)(ctx->last_f[k] +
+                              (int32_t)(fr->f[k] - ctx->last_f[k]) * ts / 1024);
+}
+
+int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, syn_en_ctx *ctx,
                     int32_t *work, int16_t *out, int max_out)
 {
     int idx = ph_id / 4, stress = ph_id % 4;
     int kind, dur, i, written = 0, pre_len = 0;
+    int f0_q8 = ctx ? syn_en_ctx_f0(ctx, ph_id) : 0;
+    int smooth_n = ctx ? syn_ms(ctx->smooth_ms) : 0;
     syn_frame fr;
 
     if (idx >= SYN_EN_PHONEMES)
@@ -541,6 +573,7 @@ int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, int f0_q8,
             int32_t t = dur > 1 ? (int32_t)i * 1024 / (dur - 1) : 1024;
             int32_t ts = (int32_t)(((int64_t)t * t * (3 * 1024 - 2 * t)) >> 20);
             lerp3(fr.f, SYN_EN_FORMANT[a], SYN_EN_FORMANT[b], ts, 1024);
+            smooth_in(&fr, ctx, i, smooth_n);
             written += syn_render(s, &fr, 1, work + written, max_out - written);
         }
     } else {
@@ -582,8 +615,18 @@ int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, int f0_q8,
         fr.f0_q8 = (uint16_t)(f0_q8 > 0 ? f0_q8 : SYN_BASE_F0_Q8);
         for (i = 0; i < dur && written < max_out; i++) {
             fr.silent = (noisy && i < closure) ? 1 : 0;
+            smooth_in(&fr, ctx, i, smooth_n);
             written += syn_render(s, &fr, 1, work + written, max_out - written);
         }
+    }
+
+    /* 記下收尾的共振峰給下一個音素滑進來。fr.f 在兩條路徑走完之後都
+     * 停在這個音素的終點值（母音是雙母音的第二個目標，子音是它自己）。 */
+    if (ctx) {
+        ctx->last_f[0] = fr.f[0];
+        ctx->last_f[1] = fr.f[1];
+        ctx->last_f[2] = fr.f[2];
+        ctx->has_last = 1;
     }
 
     syn_normalize(work, written, pre_len,

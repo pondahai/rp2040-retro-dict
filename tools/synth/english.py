@@ -85,6 +85,17 @@ BASE_LEVEL = 1.0     # 相對 voice.BASE_F0
 # 用同一個值（gen_tables.py -> SYN_EN_DECL_Q8）。
 DECLINATION = 0.22
 
+# 共振峰跨音素平滑的視窗（毫秒）。音素邊界的共振峰是跳變的，不抹平的話
+# 每個音素之間會有喀噠聲。名字取出來是因為韌體端要用同一個值
+# （gen_tables.py -> SYN_EN_SMOOTH_MS）。
+#
+# **兩邊的做法不同，這件事要講清楚**：這裡是對整條軌跡做置中的移動平均
+# （前後各 9ms 都會被改到）；韌體是串流的，前一個音素已經送出去了，只能
+# 在每個音素的**開頭** 18ms 從前一個音素的共振峰滑進來。目的相同（消掉
+# 邊界跳變），數字不同 —— 所以這一項不能拿 compare_synth.py 逐點比對，
+# 要靠耳朵判。
+SMOOTH_MS = 18
+
 
 def _seg(kind, n, formants, bw, voiced, f0=None):
     return {"kind": kind, "n": n, "formants": formants, "bw": bw,
@@ -173,7 +184,7 @@ def synth(phones, rate=1.0):
             voiced_flag.append(s["kind"] == "vowel")
 
     # 共振峰在段與段之間也要滑行，否則每個音素之間會有喀噠聲
-    track = _smooth(track, voice._ms(18))
+    track = _smooth(track, voice._ms(SMOOTH_MS))
 
     voiced = voice._voiced_source(total, f0_track)
     src = []

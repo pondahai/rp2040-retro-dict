@@ -4,6 +4,7 @@
  *   test_synth <輸出.wav> en  <音素id> [<音素id> ...]
  *   test_synth <輸出.wav> zhw <音節id> [<音節id> ...]   整串，走 speech.c
  *   test_synth <輸出.wav> enw <音素id> [<音素id> ...]   整詞，走 speech.c
+ *   test_synth <輸出.wav> enw0 <音素id> [...]           同上但關掉平滑（A/B 用）
  *   test_synth -          enf0 <音素id> [<音素id> ...]  只印每個音素的基頻
  *
  * enf0 不產生波形，印的是 syn_en_ctx 決定的 f0（Q8）—— 跟 speech.c 走的是
@@ -114,8 +115,11 @@ int main(int argc, char **argv)
     }
 
     /* --- 整串模式：走韌體真正會走的 speech_ids() --- */
-    if (strcmp(argv[2], "zhw") == 0 || strcmp(argv[2], "enw") == 0) {
+    if (strcmp(argv[2], "zhw") == 0 || strcmp(argv[2], "enw") == 0 ||
+        strcmp(argv[2], "enw0") == 0) {
         int zh = strcmp(argv[2], "zhw") == 0;
+        if (strcmp(argv[2], "enw0") == 0)
+            syn_en_set_smoothing(0);
         static uint8_t ids[256];
         speech sp;
         int nb = 0;
