@@ -3,6 +3,12 @@
  *   test_synth <輸出.wav> zh  <音節id> [<音節id> ...]   逐音節，無脈絡
  *   test_synth <輸出.wav> en  <音素id> [<音素id> ...]
  *   test_synth <輸出.wav> zhw <音節id> [<音節id> ...]   整串，走 speech.c
+ *   test_synth <輸出.wav> enw <音素id> [<音素id> ...]   整詞，走 speech.c
+ *   test_synth -          enf0 <音素id> [<音素id> ...]  只印每個音素的基頻
+ *
+ * enf0 不產生波形，印的是 syn_en_ctx 決定的 f0（Q8）—— 跟 speech.c 走的是
+ * 同一份程式碼，不是照抄的第二份實作—— 句末降調是「每個
+ * 母音該多高」的規則，直接比這串數字比從波形量音高準得多。
  *
  * zh 與 zhw 的差別就是這次移植的東西：zhw 會走 speech_ids()，於是有音節
  * 間隙、輕聲看前字、句末拉長；zh 沒有。兩個模式都留著，因為逐音節比對
@@ -93,8 +99,23 @@ int main(int argc, char **argv)
     }
     is_zh = strcmp(argv[2], "zh") == 0;
 
+    /* --- 只印基頻：驗句末降調 --- */
+    if (strcmp(argv[2], "enf0") == 0) {
+        syn_en_ctx probe;
+        int nv = 0;
+        for (i = 3; i < argc; i++)
+            nv += syn_en_is_vowel((uint16_t)strtoul(argv[i], NULL, 10));
+        syn_en_ctx_init(&probe, nv);
+        for (i = 3; i < argc; i++) {
+            uint16_t id = (uint16_t)strtoul(argv[i], NULL, 10);
+            printf("%d\n", syn_en_ctx_f0(&probe, id));
+        }
+        return 0;
+    }
+
     /* --- 整串模式：走韌體真正會走的 speech_ids() --- */
-    if (strcmp(argv[2], "zhw") == 0) {
+    if (strcmp(argv[2], "zhw") == 0 || strcmp(argv[2], "enw") == 0) {
+        int zh = strcmp(argv[2], "zhw") == 0;
         static uint8_t ids[256];
         speech sp;
         int nb = 0;
@@ -105,7 +126,7 @@ int main(int argc, char **argv)
         }
         sp_total = 0;
         speech_init(&sp, collect, NULL, sp_work, sp_seg, sp_pcm, MAXSEG);
-        speech_ids(&sp, ids, nb, 1);
+        speech_ids(&sp, ids, nb, zh);
         if (write_wav(argv[1], buf, sp_total) != 0) {
             fprintf(stderr, "寫不了 %s\n", argv[1]);
             return 3;

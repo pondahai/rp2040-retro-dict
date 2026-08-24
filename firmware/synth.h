@@ -85,6 +85,45 @@ int syn_syllable_ctx(syn_state *s, uint16_t syl_id, int prev_tone, int is_final,
 int syn_phoneme(syn_state *s, uint16_t ph_id,
                 int32_t *work, int16_t *out, int max_out);
 
+/* 這個音素是不是母音（含雙母音）。句末降調要先數過整個詞的母音才算得出
+ * 每個母音該降多少，所以呼叫端需要這支做前掃。 */
+int syn_en_is_vowel(uint16_t ph_id);
+
+/* 這個音素的基頻（Q8）。母音回傳「重音 × 降調」算完的值；非母音回 0，
+ * 表示「我沒有自己的音高，沿用前一個母音的」—— 對應 Python 參考實作
+ * english.py synth() 裡那個跨段延續的 last_f0。
+ * decl_q8 是降調倍率，256 = 不降。 */
+int syn_en_f0_q8(uint16_t ph_id, int decl_q8);
+
+/* 同 syn_phoneme()，但基頻由呼叫端指定（0 = 照原本的算法）。
+ * 句末降調是跨音素的：一個音素看不到自己在詞裡的第幾個母音。 */
+int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, int f0_q8,
+                    int32_t *work, int16_t *out, int max_out);
+
+/* 句末降調的狀態機。
+ *
+ * Python 參考實作（english.py 的 plan()）是整個詞先攤成段清單再算，因為
+ * 它有整個詞的 RAM 可用。板子上不行 —— speech.c 是一段合成完就送走的串流
+ * 架構。所以這裡是等價的串流形式：先數出母音總數，之後每遇到一個母音就
+ * 往下降一格，子音沿用前一個母音的音高。每個母音算出來的基頻與 Python
+ * 逐一相同，只是計算的時機不同。
+ *
+ * 放在 synth.h 而不是 speech.c 裡面，是為了讓測試程式能走同一份程式碼 ——
+ * 測試自己抄一份算式的話，兩邊一起改壞就驗不出來了。 */
+typedef struct {
+    int n_vowels;
+    int seen;
+    int carry_f0_q8;
+} syn_en_ctx;
+
+void syn_en_ctx_init(syn_en_ctx *c, int n_vowels);
+
+/* 這個音素該用的基頻（Q8）。母音會順便把狀態往前推一格。 */
+int syn_en_ctx_f0(syn_en_ctx *c, uint16_t ph_id);
+
+/* 前掃：一串音素 id 裡有幾個母音。 */
+int syn_en_count_vowels(const uint16_t *ids, int n);
+
 /* --- 工具 --- */
 int syn_ms(int ms);              /* 毫秒 -> 取樣點數 */
 

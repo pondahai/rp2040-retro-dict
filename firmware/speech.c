@@ -90,7 +90,8 @@ static void emit_gap(speech *sp, int ms)
     }
 }
 
-static int one(speech *sp, uint16_t id, int is_zh, int prev_tone, int is_final)
+static int one(speech *sp, uint16_t id, int is_zh, int prev_tone, int is_final,
+               int f0_q8)
 {
     int n;
     /* 每個音素／音節各自從乾淨的狀態開始 —— 與 Python 參考實作一致
@@ -98,7 +99,8 @@ static int one(speech *sp, uint16_t id, int is_zh, int prev_tone, int is_final)
     syn_init(&sp->st, 12345u);
     n = is_zh ? syn_syllable_ctx(&sp->st, id, prev_tone, is_final,
                                  sp->work, sp->seg, sp->max_seg)
-              : syn_phoneme(&sp->st, id, sp->work, sp->seg, sp->max_seg);
+              : syn_phoneme_ctx(&sp->st, id, f0_q8,
+                                sp->work, sp->seg, sp->max_seg);
     if (n < 0)
         return 0;            /* 不認得的 id 就跳過，不要整個詞不出聲 */
     if (!is_zh) {
@@ -116,16 +118,26 @@ int speech_ids(speech *sp, const uint8_t *ids, int nbytes, int is_zh)
 {
     int i, last;
     int prev_tone = SYN_TONE_NONE;
+    syn_en_ctx en;
 
     sp->samples = 0;
     if (!ids || nbytes < 2)
         return 0;
 
+    /* 前掃數母音 —— 降調要知道總數才算得出每個母音降多少。 */
+    syn_en_ctx_init(&en, 0);
+    if (!is_zh) {
+        int nv = 0;
+        for (i = 0; i + 1 < nbytes; i += 2)
+            nv += syn_en_is_vowel((uint16_t)(ids[i] | (ids[i + 1] << 8)));
+        syn_en_ctx_init(&en, nv);
+    }
+
     last = ((nbytes / 2) - 1) * 2;
     for (i = 0; i + 1 < nbytes; i += 2) {
         uint16_t id = (uint16_t)(ids[i] | (ids[i + 1] << 8));
         int is_final = (i == last);
-        one(sp, id, is_zh, prev_tone, is_final);
+        one(sp, id, is_zh, prev_tone, is_final, is_zh ? 0 : syn_en_ctx_f0(&en, id));
         if (is_zh) {
             int tone = id % 8;
             /* 輕聲不改變脈絡：「本子」的子看的是「本」。與 prosody.py
@@ -148,8 +160,15 @@ int speech_letters(speech *sp, const char *ascii)
     if (!ascii)
         return 0;
     n = lts_to_ids(ascii, ids, (int)(sizeof(ids) / sizeof(ids[0])));
-    for (i = 0; i < n; i++)
-        one(sp, ids[i], 0, SYN_TONE_NONE, 0);
+    {
+        syn_en_ctx en;
+        int nv = 0;
+        for (i = 0; i < n; i++)
+            nv += syn_en_is_vowel(ids[i]);
+        syn_en_ctx_init(&en, nv);
+        for (i = 0; i < n; i++)
+            one(sp, ids[i], 0, SYN_TONE_NONE, 0, syn_en_ctx_f0(&en, ids[i]));
+    }
     return sp->samples;
 }
 
@@ -171,7 +190,9 @@ int speech_spell(speech *sp, const char *ascii)
         else
             continue;        /* 標點與空白不唸 */
         for (k = 0; k < SPELL_MAX_PH && SPELL_IDS[row][k]; k++)
-            one(sp, SPELL_IDS[row][k], 0, SYN_TONE_NONE, 0);
+            /* 逐字母唸不降調：每個字母是各自獨立的一次發音，
+             * 不是一個詞。 */
+            one(sp, SPELL_IDS[row][k], 0, SYN_TONE_NONE, 0, 0);
     }
     return sp->samples;
 }

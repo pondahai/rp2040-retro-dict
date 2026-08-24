@@ -237,6 +237,7 @@ def main():
         emit(f, "#define SYN_EN_DUR_NASAL      %d" % english.DUR_NASAL)
         emit(f, "#define SYN_EN_DUR_GLIDE      %d" % english.DUR_GLIDE)
         emit(f, "#define SYN_EN_LONG_FACTOR_Q8 %d" % q(english.LONG_FACTOR, 8))
+        emit(f, "#define SYN_EN_DECL_Q8 %d" % q(english.DECLINATION, 8))
         emit(f, "static const uint16_t SYN_EN_STRESS_DUR_Q8[3] = { %s };"
              % ", ".join(str(q(english.STRESS_DUR[i], 8)) for i in (0, 1, 2)))
         emit(f, "static const uint16_t SYN_EN_STRESS_F0_Q8[3] = { %s };"

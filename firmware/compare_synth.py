@@ -234,6 +234,58 @@ def check_neutral_context():
               % ("輕聲看前字", fa or 0, fb or 0))
 
 
+def run_c_f0(ids):
+    r = subprocess.run([EXE, "-", "enf0"] + [str(i) for i in ids],
+                       capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.decode("utf-8", "replace"))
+    return [int(x) for x in r.stdout.split()]
+
+
+def compare_en_declination(label, phones):
+    """句末降調：驗的是「每個母音該多高」，直接比 f0 數列。
+
+    為什麼不從波形量音高：子音段沒有可量的基頻，而降調恰恰是靠「子音沿用
+    前一個母音的高度」把整條線接起來的。量波形只驗得到母音，剛好漏掉這一半。
+    """
+    ids = [phoneme.phoneme_id(ph, st) for ph, st in phones]
+    c = run_c_f0(ids)
+
+    nv = sum(1 for ph, _ in phones if ph in english.VOWELS or ph in english.DIPHTHONGS)
+    py, seen = [], 0
+    carry = voice.BASE_F0 * english.BASE_LEVEL
+    for ph, st in phones:
+        if ph in english.VOWELS or ph in english.DIPHTHONGS:
+            f = (voice.BASE_F0 * english.BASE_LEVEL
+                 * english.STRESS_F0.get(st, 1.0) * english._decl(seen, nv))
+            seen += 1
+            carry = f
+        else:
+            f = carry
+        py.append(f)
+
+    if len(c) != len(py):
+        fail("%s: 音素數不符" % label, "C=%d Python=%d" % (len(c), len(py)))
+        return
+    worst = 0.0
+    for a, b in zip(c, py):
+        worst = max(worst, abs(a / 256.0 - b))
+    if worst > 1.0:
+        fail("%s: 降調對不上" % label,
+             "最大差 %.2f Hz\nC =%s\nPy=%s"
+             % (worst, [round(v / 256.0, 1) for v in c],
+                [round(v, 1) for v in py]))
+        return
+    # 摘要看的是母音，不是第一個／最後一個音素 —— 詞首詞尾常常是子音，
+    # 拿子音的沿用值當「降了多少」會印出 0%，看起來像沒作用。
+    vf = [f for (ph, _), f in zip(phones, py)
+          if ph in english.VOWELS or ph in english.DIPHTHONGS]
+    drop = (1.0 - vf[-1] / vf[0]) * 100 if len(vf) > 1 else 0.0
+    print("  %-20s %d 音素／%d 母音  首母音 %.1fHz -> 尾母音 %.1fHz（降 %.0f%%）  "
+          "最大差 %.2fHz  OK"
+          % (label, len(py), nv, vf[0], vf[-1], drop, worst))
+
+
 def main():
     if not os.path.exists(EXE):
         print("找不到 %s —— 先跑 firmware/build_synth.bat" % EXE)
@@ -266,6 +318,18 @@ def main():
         compare("%s%s (id=%d)" % (ph, "*" * stress, pid),
                 run_c("en", [pid]), py,
                 skip_ms=0, noisy=noisy)
+
+    print()
+    print("英文句末降調（C 的 syn_en_ctx vs Python 的 english.plan）")
+    for label, phones in (
+            ("dictionary", [("d", 0), ("ih", 1), ("k", 0), ("sh", 0),
+                            ("ax", 0), ("n", 0), ("eh", 0), ("r", 0),
+                            ("iy", 0)]),
+            ("ability", [("ax", 0), ("b", 0), ("ih", 1), ("l", 0),
+                         ("ih", 0), ("t", 0), ("iy", 0)]),
+            ("cat", [("k", 0), ("ae", 1), ("t", 0)]),
+            ("a", [("ax", 0)])):
+        compare_en_declination(label, phones)
 
     print()
     print("整串（C 的 speech_ids vs Python 的 prosody.plan）")

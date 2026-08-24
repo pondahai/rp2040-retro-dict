@@ -442,8 +442,69 @@ int syn_syllable_ctx(syn_state *s, uint16_t syl_id, int prev_tone, int is_final,
 /* --------------------------------------------------------------------- */
 /* 英文：音素 id -> 波形                                                  */
 
+int syn_en_is_vowel(uint16_t ph_id)
+{
+    int idx = ph_id / 4;
+    if (idx >= SYN_EN_PHONEMES)
+        return 0;
+    return SYN_EN_IS_VOWEL[idx] || SYN_EN_DIPH[idx][0] != 0xFF;
+}
+
+int syn_en_f0_q8(uint16_t ph_id, int decl_q8)
+{
+    int idx = ph_id / 4, stress = ph_id % 4;
+    int32_t f0;
+    if (!syn_en_is_vowel(ph_id))
+        return 0;
+    (void)idx;
+    f0 = (int32_t)(((int64_t)SYN_BASE_F0_Q8 *
+                    SYN_EN_STRESS_F0_Q8[stress <= 2 ? stress : 0]) >> 8);
+    if (decl_q8 > 0 && decl_q8 != 256)
+        f0 = (int32_t)(((int64_t)f0 * decl_q8) >> 8);
+    return (int)f0;
+}
+
+void syn_en_ctx_init(syn_en_ctx *c, int n_vowels)
+{
+    c->n_vowels = n_vowels;
+    c->seen = 0;
+    /* 詞首的子音還沒有母音可以沿用，用基準基頻 —— 對應 Python
+     * english.py synth() 裡 last_f0 的初值 BASE_LEVEL。 */
+    c->carry_f0_q8 = SYN_BASE_F0_Q8;
+}
+
+int syn_en_ctx_f0(syn_en_ctx *c, uint16_t ph_id)
+{
+    int decl = 256;
+    int f0;
+    if (c->n_vowels > 1)
+        decl = 256 - (int)SYN_EN_DECL_Q8 * c->seen / (c->n_vowels - 1);
+    f0 = syn_en_f0_q8(ph_id, decl);
+    if (f0) {
+        c->carry_f0_q8 = f0;
+        c->seen++;
+        return f0;
+    }
+    return c->carry_f0_q8;
+}
+
+int syn_en_count_vowels(const uint16_t *ids, int n)
+{
+    int i, nv = 0;
+    for (i = 0; i < n; i++)
+        nv += syn_en_is_vowel(ids[i]);
+    return nv;
+}
+
 int syn_phoneme(syn_state *s, uint16_t ph_id,
                 int32_t *work, int16_t *out, int max_out)
+{
+    /* 沒有脈絡：不降調，非母音用基準基頻。與移植前完全相同。 */
+    return syn_phoneme_ctx(s, ph_id, 0, work, out, max_out);
+}
+
+int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, int f0_q8,
+                    int32_t *work, int16_t *out, int max_out)
 {
     int idx = ph_id / 4, stress = ph_id % 4;
     int kind, dur, i, written = 0, pre_len = 0;
@@ -473,8 +534,9 @@ int syn_phoneme(syn_state *s, uint16_t ph_id,
         dur = dur * SYN_EN_STRESS_DUR_Q8[stress <= 2 ? stress : 0] / 256;
         dur = syn_ms(dur);
         fr.voiced = 1;
-        fr.f0_q8 = (uint16_t)(((int64_t)SYN_BASE_F0_Q8 *
-                               SYN_EN_STRESS_F0_Q8[stress <= 2 ? stress : 0]) >> 8);
+        fr.f0_q8 = (uint16_t)(f0_q8 > 0 ? f0_q8
+                   : (int)(((int64_t)SYN_BASE_F0_Q8 *
+                            SYN_EN_STRESS_F0_Q8[stress <= 2 ? stress : 0]) >> 8));
         for (i = 0; i < dur && written < max_out; i++) {
             int32_t t = dur > 1 ? (int32_t)i * 1024 / (dur - 1) : 1024;
             int32_t ts = (int32_t)(((int64_t)t * t * (3 * 1024 - 2 * t)) >> 20);
@@ -515,7 +577,9 @@ int syn_phoneme(syn_state *s, uint16_t ph_id,
                 fr.f[i] = SYN_EN_FORMANT[idx][i];
             fr.voiced = 1;
         }
-        fr.f0_q8 = SYN_BASE_F0_Q8;
+        /* 子音沿用前一個母音的音高（Python 的 last_f0）。整個詞往下滑的
+         * 時候，夾在中間的濁子音跟著滑才不會聽起來一節一節的。 */
+        fr.f0_q8 = (uint16_t)(f0_q8 > 0 ? f0_q8 : SYN_BASE_F0_Q8);
         for (i = 0; i < dur && written < max_out; i++) {
             fr.silent = (noisy && i < closure) ? 1 : 0;
             written += syn_render(s, &fr, 1, work + written, max_out - written);

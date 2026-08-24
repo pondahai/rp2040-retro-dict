@@ -80,10 +80,22 @@ STRESS_F0 = {0: 0.92, 1: 1.18, 2: 1.03}    # 也把音高抬高
 
 BASE_LEVEL = 1.0     # 相對 voice.BASE_F0
 
+# 句末降調：整個詞的最後一個母音比第一個低這麼多（比例）。英文陳述句的
+# 音高整體下滑，少了它每個字都像獨立念出來的。名字取出來是因為韌體端要
+# 用同一個值（gen_tables.py -> SYN_EN_DECL_Q8）。
+DECLINATION = 0.22
+
 
 def _seg(kind, n, formants, bw, voiced, f0=None):
     return {"kind": kind, "n": n, "formants": formants, "bw": bw,
             "voiced": voiced, "f0": f0}
+
+
+def _decl(seen_v, n_vowels):
+    """第 seen_v 個母音（0 起算）的降調倍率。"""
+    if n_vowels <= 1:
+        return 1.0
+    return 1.0 - DECLINATION * (seen_v / (n_vowels - 1))
 
 
 def plan(phones, rate=1.0):
@@ -99,7 +111,7 @@ def plan(phones, rate=1.0):
         if ph in DIPHTHONGS:
             a, b = DIPHTHONGS[ph]
             dur = DUR_DIPHTHONG * STRESS_DUR.get(stress, 1.0) * rate
-            decl = 1.0 - 0.22 * (seen_v / max(1, n_vowels - 1)) if n_vowels > 1 else 1.0
+            decl = _decl(seen_v, n_vowels)
             segs.append(_seg("vowel", voice._ms(dur),
                              [VOWELS[a], VOWELS[b]], voice.VOWEL_BW, True,
                              BASE_LEVEL * STRESS_F0.get(stress, 1.0) * decl))
@@ -108,7 +120,7 @@ def plan(phones, rate=1.0):
             dur = DUR_VOWEL * STRESS_DUR.get(stress, 1.0) * rate
             if ph in LONG_VOWELS:
                 dur *= LONG_FACTOR
-            decl = 1.0 - 0.22 * (seen_v / max(1, n_vowels - 1)) if n_vowels > 1 else 1.0
+            decl = _decl(seen_v, n_vowels)
             segs.append(_seg("vowel", voice._ms(dur), [VOWELS[ph]],
                              voice.VOWEL_BW, True,
                              BASE_LEVEL * STRESS_F0.get(stress, 1.0) * decl))

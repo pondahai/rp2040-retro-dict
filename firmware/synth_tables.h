@@ -673,6 +673,7 @@ static const uint8_t SYN_EN_IS_LONG[43] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 #define SYN_EN_DUR_NASAL      65
 #define SYN_EN_DUR_GLIDE      55
 #define SYN_EN_LONG_FACTOR_Q8 384
+#define SYN_EN_DECL_Q8 56
 static const uint16_t SYN_EN_STRESS_DUR_Q8[3] = { 205, 346, 269 };
 static const uint16_t SYN_EN_STRESS_F0_Q8[3] = { 236, 302, 264 };
 
