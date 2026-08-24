@@ -210,6 +210,19 @@ static font g_font_dev;
 // 這裡要的是整體播放音量，是播放層的事，不該回頭動合成器的配方。
 // 混音器出口有 0..255 的箝位（audio.c），所以萬一削波也只會削平不會繞回。
 #define SPEAK_VOLUME    435         // 256 * 1.7
+
+// 上一次唸過的是誰。
+//
+// 發音路徑唯一會重複的情境就是「同一個字再聽一次」，而那時候波形**本來
+// 就還留在 g_pcm 裡** —— 播放是讓混音器直接讀這塊記憶體，唸完也沒人清掉。
+// 所以「快取」要做的只是記得它是誰的，不需要多一塊緩衝區。
+//
+// key 是 [來源標記][原始位元組]：音素／音節 id 串就用 id 本身，沒有音標而
+// 走字母規則的就用那個字串。太長的（極少數）就不快取，直接重算 —— 寧可
+// 慢一次，也不要為了罕見情況再吃 RAM。
+#define SPEAK_KEY_MAX   96
+static uint8_t g_last_key[SPEAK_KEY_MAX];
+static int g_last_key_n = -1;       // <0 = 沒有有效的快取
 static int32_t g_syn_work[SPEAK_MAX_SEG];
 static int16_t g_syn_seg[SPEAK_MAX_SEG];
 static uint8_t g_syn_pcm8[SPEAK_MAX_SEG];
@@ -228,6 +241,32 @@ static void pcm_sink(void *ctx, const uint8_t *pcm, int n)
         return;
     memcpy(g_pcm + g_pcm_n, pcm, (size_t)n);
     g_pcm_n += n;
+}
+
+// 播放 g_pcm 目前的內容。合成完與快取命中都走這裡，免得兩條路的音量或
+// 狀態列更新哪天改到一半。
+static void speak_play(void);
+
+// 組出「這次要唸的是誰」的鍵。回傳長度，或 -1 表示太長、這次不快取。
+static int speak_key_build(uint8_t *key, const uint8_t *ids, int nbytes,
+                           int is_zh, const char *fallback)
+{
+    int n = 0;
+    if (ids && nbytes >= 2) {
+        if (nbytes + 1 > SPEAK_KEY_MAX)
+            return -1;
+        key[n++] = is_zh ? 1 : 0;
+        memcpy(key + n, ids, (size_t)nbytes);
+        n += nbytes;
+    } else {
+        int len = fallback ? (int)strlen(fallback) : 0;
+        if (len <= 0 || len + 1 > SPEAK_KEY_MAX)
+            return -1;
+        key[n++] = 2;           // 走字母規則的，用字串本身當鍵
+        memcpy(key + n, fallback, (size_t)len);
+        n += len;
+    }
+    return n;
 }
 
 // 純方波測試音。用途是**把病因切開**：按 Fn+2 聽得到嗶聲，就表示 PWM、DMA、
@@ -256,6 +295,7 @@ static void tone(int hz, int ms)
         g_pcm[i] = ((i / half) & 1) ? 180 : 74;
     }
     g_pcm_n = n;
+    g_last_key_n = -1;          // tone() 借用了 g_pcm，快取的波形沒了
     speak_stop();
     g_speak_src = audio_play_once(g_pcm, n);
     if (g_speak_src >= 0)
@@ -265,9 +305,23 @@ static void tone(int hz, int ms)
 static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
                      const char *fallback)
 {
+    uint8_t key[SPEAK_KEY_MAX];
+    int keyn;
+
     (void)ctx;
+    keyn = speak_key_build(key, ids, nbytes, is_zh, fallback);
     speak_stop();               // 上一次還在播就打斷它
+
+    // 跟上次唸的是同一個東西 -> 波形還在 g_pcm，不用重算
+    if (keyn > 0 && keyn == g_last_key_n && g_pcm_n > 0 &&
+        memcmp(key, g_last_key, (size_t)keyn) == 0) {
+        Serial.printf("speak: %d samples (快取命中)\n", g_pcm_n);
+        speak_play();
+        return;
+    }
+
     g_pcm_n = 0;
+    g_last_key_n = -1;          // 從這裡開始 g_pcm 的內容就不可信了
     speech_init(&g_speech, pcm_sink, NULL, g_syn_work, g_syn_seg, g_syn_pcm8,
                 SPEAK_MAX_SEG);
     if (ids && nbytes >= 2) {
@@ -284,6 +338,15 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
         tone(200, 120);
         return;
     }
+    if (keyn > 0) {             // 記住這次的波形是誰的
+        memcpy(g_last_key, key, (size_t)keyn);
+        g_last_key_n = keyn;
+    }
+    speak_play();
+}
+
+static void speak_play(void)
+{
     g_speak_src = audio_play_once(g_pcm, g_pcm_n);
     if (g_speak_src >= 0)
         audio_source_set_volume(g_speak_src, SPEAK_VOLUME);
