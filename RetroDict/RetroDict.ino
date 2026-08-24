@@ -269,9 +269,12 @@ static int speak_key_build(uint8_t *key, const uint8_t *ids, int nbytes,
     return n;
 }
 
-// 純方波測試音。用途是**把病因切開**：按 Fn+2 聽得到嗶聲，就表示 PWM、DMA、
-// 接線、喇叭都是好的，問題在合成那一側；還是只有卡答聲，那就是音訊路徑本身。
+// 純方波測試音（Fn+9，見主迴圈；本來是 Fn+2，那顆後來給了英漢/漢英切換）。
+// 用途是**把病因切開**：按下去聽得到嗶聲，就表示 PWM、DMA、接線、喇叭都是
+// 好的，問題在合成那一側；還是只有卡答聲，那就是音訊路徑本身。
 // 卡答聲的來源是 DMA 沒有波形可播，PWM 位準只跳了一下。
+//
+// 注意它借用 g_pcm 當緩衝，所以會蓋掉發音快取的波形 —— 見底下那行。
 static int g_speak_src = -1;
 
 static void speak_stop(void)
