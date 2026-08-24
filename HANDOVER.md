@@ -38,13 +38,41 @@
 | CE 繁體化 | 完成：索引鍵與詞頭是繁體，簡體在 `SIMP` 欄 |
 | 注音 IME | 完成並實機驗過：Fn+2 切換，1360 筆碼表逐筆比對 |
 
-純 C 那幾支加起來約 **12.7 KB（不含表）、靜態 RAM 0**（`-Os`、Cortex-M0+）：`dict.c` 1,444 B、
-`synth.c` 5,088 B + 參數表 1,938 B、`font.c` 997 B、`ui.c` 1,348 B、
-`keys.c` 904 B、`app.c` 1,044 B、`fbuf.c` 460 B。
+純 C 那幾支加起來 **13.9 KB 程式碼、69.5 KB 唯讀表、靜態 RAM 0**
+（`-Os`、Cortex-M0+，量自 build 產物的 `.o`）：
 
-整支 sketch 編出來是 flash 125,956 B（6%）、靜態 RAM 104,288 B（39%）——
-RAM 是 37.5 KB 的畫布 + 39 KB 的字模碼位表快取 + SD 函式庫。
-那 39 KB **不是可有可無的最佳化**：沒有它，每畫一張畫面要讀 SD 兩千多次，
+| 模組 | 程式碼 | 表（rodata） |
+|---|---:|---:|
+| `app.c` | 3,824 | 259 |
+| `synth.c` | 3,234 | 1,848 |
+| `ui.c` | 1,474 | 73 |
+| `dict.c` | 1,434 | 8 |
+| `font.c` | 1,420 | 9 |
+| `lts.c` | 716 | 3,003 |
+| `keys.c` | 698 | 256 |
+| `ime.c` | 558 | 65,112 |
+| `fbuf.c` | 464 | 0 |
+| `speech.c` | 422 | 635 |
+| **合計** | **14,244** | **71,203** |
+
+表比程式碼大 5 倍，而且幾乎全在 `ime.c` 的注音碼表（65 KB）—— 那是資料不是邏輯，
+放 flash 不佔 RAM。
+
+整支 sketch 編出來是 flash 209,420 B（10%）、靜態 RAM 175,220 B（66%）。
+RAM 的組成（`arm-none-eabi-nm --size-sort`）：
+
+| | |
+|---|---:|
+| 字模碼位表快取 | 40,960 |
+| 4bpp 畫布 | 38,468 |
+| 發音 PCM 緩衝 `g_pcm` | 24,000 |
+| 合成器工作區 `g_syn_work` | 16,000 |
+| 前景狀態 `g_app` | 10,620 |
+| 音訊 DMA（mixer + buffers） | 16,384 |
+| 合成器音段／8bit 暫存 | 12,000 |
+| 其餘（SD 函式庫、USB、core1 堆疊…） | ~16,800 |
+
+那 40 KB 的字模快取 **不是可有可無的最佳化**：沒有它，每畫一張畫面要讀 SD 兩千多次，
 實機上按一個字母要等好幾秒（見 firmware/README「效能」）。
 
 ---
@@ -104,9 +132,10 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
 需要 arduino-cli 與 `rp2040:rp2040` 5.6.1。SD 卡要有 `/DICT/`
 （`EC.IDX`、`EC.DAT`、`ECC.IDX`、`FONT.BIN`）。
 
-實測佈局：image `0x10004000..0x10024200`（131,584 bytes），
-向量表 `SP=0x20042000 Reset=0x100040e3`，載入器 `app_present()` 的條件都通過。
-合併跳板後 `RetroDict_standalone.uf2` 578 blocks。封面圖
+實測佈局：image `0x10004000..0x10038d00`（216,320 bytes），上限 `0x101ff000`，
+餘裕 1,860,352 bytes。向量表 `SP=0x20042000 Reset=0x100040e3`，
+載入器 `app_present()` 的條件都通過。
+合併跳板後 `RetroDict_standalone.uf2` 909 blocks（465,408 bytes）。封面圖
 `assets/RetroDict.ino.RAW` 也會被複製到 `build_offset/`，與 uf2 同放 SD 根目錄。
 
 ---
