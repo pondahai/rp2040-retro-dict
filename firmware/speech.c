@@ -96,15 +96,22 @@ static int one(speech *sp, uint16_t id, int is_zh, int prev_tone, int is_final,
                syn_en_ctx *en)
 {
     int n;
-    /* 每個音節／單獨的音素各自從乾淨的狀態開始 —— 與 Python 參考實作
-     * 一致（firmware/compare_synth.py 就是這樣比的）。
+    /* 每個音素／音節都從乾淨的狀態開始。
      *
-     * **但整詞的英文不重置**：Python 的 english.synth() 是對整個詞呼叫
-     * 一次 _voiced_source()，聲門源與共振器記憶是連續的。這裡每個音素
-     * 重置一次的話，聲門相位在每個邊界跳一次 —— 那個跳變比共振峰的
-     * 跳變還響，只抹平共振峰是抹不掉喀噠聲的。 */
-    if (is_zh || !en || en->smooth_ms == 0 || !en->has_last)
-        syn_init(&sp->st, 12345u);   /* !has_last = 這是詞的第一個音素 */
+     * **這一行不能拿掉，理由不只是「跟 Python 參考實作一致」。**
+     * 曾經試過整個詞共用一條激發源（Python 的 english.synth() 就是對整個
+     * 詞呼叫一次 _voiced_source()），結果爆破音整個不見了 —— apple 的 p、
+     * people 的第二個 p 都沒聲音。
+     *
+     * 原因是 syn_normalize() 一次只看一個音素，而塞音的 pre_len == n，
+     * 整段用同一個增益。前一個母音的共振器殘響會被帶進成阻段：實測 apple
+     * 的 /p/ 原始 rms 從 47 變成 456（爆破本身沒變，58 -> 55），於是增益
+     * 掉了十倍，爆破音被自己的殘響壓死。
+     *
+     * 要讓連續激發源成立，得整個詞一起正規化 —— 那正是 KIND_GAIN 註解裡
+     * 說「做不到」的那件事（int32 工作區放不下整個詞）。所以這兩者是互斥的，
+     * 不是還沒做完。共振峰平滑（smooth_in()）不受影響，那個是留著的。 */
+    syn_init(&sp->st, 12345u);
     n = is_zh ? syn_syllable_ctx(&sp->st, id, prev_tone, is_final,
                                  sp->work, sp->seg, sp->max_seg)
               : syn_phoneme_ctx(&sp->st, id, en,

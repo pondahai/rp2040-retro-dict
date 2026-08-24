@@ -286,6 +286,75 @@ def compare_en_declination(label, phones):
           % (label, len(py), nv, vf[0], vf[-1], drop, worst))
 
 
+def read_wav(path):
+    with wave.open(path, "rb") as w:
+        n = w.getnframes()
+        return list(struct.unpack("<%dh" % n, w.readframes(n)))
+
+
+def run_c_word(mode, ids):
+    os.makedirs(os.path.dirname(TMP), exist_ok=True)
+    r = subprocess.run([EXE, TMP, mode] + [str(i) for i in ids],
+                       capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.decode("utf-8", "replace"))
+    return read_wav(TMP)
+
+
+def rms_of(x):
+    if not x:
+        return 0.0
+    return (sum(float(v) * v for v in x) / len(x)) ** 0.5
+
+
+def check_medial_stops(label, phones):
+    """同一個爆破音，出現在詞首與詞中間，能量不該差太多。
+
+    這是一個真的發生過的回歸：曾經讓整個詞共用一條激發源（想消掉音素邊界
+    的喀噠聲），結果前一個母音的共振器殘響被帶進塞音的成阻段。syn_normalize()
+    一次只看一個音素，而塞音的 pre_len == n 整段共用一個增益 —— 殘響把
+    rms 從 47 拉到 456，增益掉十倍，爆破音就沒了。板子上聽起來是
+    「apple 的 p 不見了」，而當時所有比對測試都是綠的。
+
+    **參考點的選法是這個測試的關鍵**：第一版拿「關掉平滑」當基準，結果
+    兩邊都帶著同一個 bug，比出來是 1.00 倍，什麼都沒驗到。改成拿同一個詞
+    裡**詞首**的同一個音素當基準 —— 詞首那個一定會重置狀態，不受影響，
+    所以它是詞內自帶的、不會一起壞掉的對照組。
+    """
+    ids = [phoneme.phoneme_id(ph, st) for ph, st in phones]
+    x = run_c_word("enw", ids)
+
+    bounds, pos = [], 0
+    for i in ids:
+        n = len(run_c("en", [i]))
+        bounds.append((pos, pos + n))
+        pos += n
+    if pos != len(x):
+        fail("%s: 切段對不上" % label, "逐段合計 %d，整詞 %d" % (pos, len(x)))
+        return
+
+    first, medial = None, []
+    for k, ((ph, _st), (lo, hi)) in enumerate(zip(phones, bounds)):
+        if ph != phones[0][0]:
+            continue
+        if k == 0:
+            first = rms_of(x[lo:hi])
+        else:
+            medial.append((ph, rms_of(x[lo:hi])))
+    if not first or not medial:
+        fail("%s: 測試詞選錯了" % label, "詞首與詞中間要有同一個爆破音")
+        return
+
+    ph, worst = min(medial, key=lambda t: t[1])
+    ratio = worst / first
+    if ratio < 0.35:
+        fail("%s: 詞中間的 /%s/ 被壓掉" % (label, ph),
+             "詞中 rms %.0f / 詞首 rms %.0f = %.2f 倍（下限 0.35）"
+             % (worst, first, ratio))
+        return
+    print("  %-20s 詞中 /%s/ 是詞首的 %.2f 倍  OK" % (label, ph, ratio))
+
+
 def main():
     if not os.path.exists(EXE):
         print("找不到 %s —— 先跑 firmware/build_synth.bat" % EXE)
@@ -330,6 +399,15 @@ def main():
             ("cat", [("k", 0), ("ae", 1), ("t", 0)]),
             ("a", [("ax", 0)])):
         compare_en_declination(label, phones)
+
+    print()
+    print("詞中間的爆破音（拿同一個詞的詞首當基準，能量不該掉）")
+    for label, phones in (
+            ("people", [("p", 0), ("iy", 1), ("p", 0), ("l", 0)]),
+            ("baby", [("b", 0), ("ey", 1), ("b", 0), ("ih", 0)]),
+            ("tight", [("t", 0), ("ay", 1), ("t", 0)]),
+            ("kick", [("k", 0), ("ih", 1), ("k", 0)])):
+        check_medial_stops(label, phones)
 
     print()
     print("整串（C 的 speech_ids vs Python 的 prosody.plan）")
