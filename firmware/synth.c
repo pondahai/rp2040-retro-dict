@@ -129,6 +129,8 @@ int syn_render(syn_state *s, const syn_frame *fr, int n,
             src = res_run(&s->glottal, pulse);
         } else {
             src = ((int32_t)(xorshift(&s->rng) & 0xFFFF) - 32768) / 40;
+            if (fr->noise_q8 && fr->noise_q8 != 256)
+                src = (int32_t)(((int64_t)src * fr->noise_q8) >> 8);
         }
 
         y = res_run(&s->r1, src);
@@ -359,6 +361,7 @@ int syn_syllable_ctx(syn_state *s, uint16_t syl_id, int prev_tone, int is_final,
             closure = syn_ms(30);
         }
         pre_len = closure + burst + aspir;
+        fr.noise_q8 = 256;              /* 逐格覆蓋，見下面的迴圈 */
 
         /* 噪音段用寬頻寬。窄共振器打在白噪上會變成有調的鳴響 ——
          * 使用者聽判時形容成「啾啾聲」。 */
@@ -394,6 +397,18 @@ int syn_syllable_ctx(syn_state *s, uint16_t syl_id, int prev_tone, int is_final,
         for (i = 0; i < pre_len && written < max_out; i++) {
             fr.f0_q8 = (uint16_t)tone_f0_q8(
                 curve, npts, (int)((int64_t)i * 256 / total));
+            /* 爆破段與送氣段的振幅不同 —— 見 syn_frame.noise_q8 */
+            if (noisy) {
+                int in_burst = (i < closure + burst);
+                if (kind == SYN_K_STOP)
+                    fr.noise_q8 = in_burst ? SYN_NOISE_STOP_BURST_Q8
+                                           : SYN_NOISE_STOP_ASP_Q8;
+                else if (kind == SYN_K_AFFRICATE)
+                    fr.noise_q8 = in_burst ? SYN_NOISE_AFFR_BURST_Q8
+                                           : SYN_NOISE_AFFR_ASP_Q8;
+                else
+                    fr.noise_q8 = SYN_NOISE_FRICATIVE_Q8;
+            }
             fr.silent = (i < closure && kind != SYN_K_NASAL &&
                          kind != SYN_K_LATERAL && kind != SYN_K_APPROX &&
                          kind != SYN_K_NONE) ? 1 : 0;
@@ -550,6 +565,7 @@ int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, syn_en_ctx *ctx,
     fr.bw[1] = SYN_VOWEL_BW2;
     fr.bw[2] = SYN_VOWEL_BW3;
     fr.silent = 0;
+    fr.noise_q8 = 256;
 
     if (SYN_EN_IS_VOWEL[idx] || SYN_EN_DIPH[idx][0] != 0xFF) {
         int a = idx, b = idx;

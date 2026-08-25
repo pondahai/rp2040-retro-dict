@@ -355,6 +355,49 @@ def check_medial_stops(label, phones):
     print("  %-20s 詞中 /%s/ 是詞首的 %.2f 倍  OK" % (label, ph, ratio))
 
 
+def check_noise_shape(label, text, closure_ms, burst_ms, asp_ms, reps=5):
+    """噪音段的**內部形狀**：爆破段與送氣段的能量比。
+
+    這一項補的是一個結構性的洞。擦音／塞擦音起頭的音節，上面那些比對
+    刻意不比波形（兩邊的亂數不同，噪音本來就不會相關），只比母音段的
+    頻譜質心 —— 於是「C 端所有噪音都用同一個振幅、把爆破強送氣弱這層
+    結構抹平了」這件事，在所有測試全綠的情況下藏了很久。
+
+    亂數不同不代表**能量包絡**不能比，但要注意兩件事：
+      1. 短窗的 RMS 變異很大，所以兩邊都取多次的中位數
+      2. **只測塞擦音**。塞音的爆破段只有 6ms（96 個取樣點），樣本太少，
+         同一組設定跑兩次就能差 20% —— 那種測試會隨機變紅，比沒有更糟
+    """
+    ids = zh_ids(text)
+    if not ids:
+        return
+    base, tone = syllable.decode_id(ids[0])
+
+    def ratio(x):
+        a = int(voice.SR * closure_ms / 1000)
+        b = a + int(voice.SR * burst_ms / 1000)
+        e = b + int(voice.SR * asp_ms / 1000)
+        if e > len(x):
+            return 0.0
+        return rms_of(x[a:b]) / max(1e-9, rms_of(x[b:e]))
+
+    cs = sorted(ratio(run_c("zh", ids)) for _ in range(reps))
+    ps = sorted(ratio(to_int16(voice.synth_syllable(
+        base, tone, prosody.TONE_DURATION[tone], prosody.TONE_CURVES[tone])))
+        for _ in range(reps))
+    rc, rp = cs[len(cs) // 2], ps[len(ps) // 2]
+    if rc <= 0 or rp <= 0:
+        fail("%s: 切不出噪音段" % label, "C=%.2f Py=%.2f" % (rc, rp))
+        return
+    off = abs(rc - rp) / rp
+    if off > 0.30:
+        fail("%s: 爆破/送氣的能量比對不上" % label,
+             "C=%.2f Python=%.2f（差 %.0f%%，容許 30%%）" % (rc, rp, off * 100))
+        return
+    print("  %-20s 爆破/送氣 C=%.2f Py=%.2f（差 %.0f%%）  OK"
+          % (label, rc, rp, off * 100))
+
+
 def main():
     if not os.path.exists(EXE):
         print("找不到 %s —— 先跑 firmware/build_synth.bat" % EXE)
@@ -399,6 +442,12 @@ def main():
             ("cat", [("k", 0), ("ae", 1), ("t", 0)]),
             ("a", [("ax", 0)])):
         compare_en_declination(label, phones)
+
+    print()
+    print("噪音段的內部形狀（爆破 vs 送氣，波形比不了但包絡可以）")
+    for label, text in (("che（ㄔ）", "che1"), ("chi（ㄔ）", "chi1"),
+                        ("qi（ㄑ）", "qi4"), ("cai（ㄘ）", "cai4")):
+        check_noise_shape(label, text, 25, 55, 40)
 
     print()
     print("詞中間的爆破音（拿同一個詞的詞首當基準，能量不該掉）")

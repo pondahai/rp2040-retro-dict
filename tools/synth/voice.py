@@ -23,6 +23,15 @@ GLOTTAL_BW = 100.0  # 聲門低通的頻寬（Klatt 的 RGP 慣用值）
 GLOTTAL_GAIN = 260.0  # 補回低通吃掉的音量
 TARGET_RMS = 0.20     # 每個音節的目標響度
 CONSONANT_LEVEL = 0.45  # 聲母段相對母音段的響度
+
+# 各噪音段的振幅。取名字是因為韌體端要用同一組值 —— 原本 C 端**所有噪音
+# 都用同一個振幅**，等於把「爆破強、送氣弱」這層結構抹平了，而
+# compare_synth.py 驗不到（擦音起頭的音節它刻意不比波形，只比母音段質心）。
+NOISE_STOP_BURST = 0.5
+NOISE_STOP_ASP = 0.28
+NOISE_AFFR_BURST = 0.42
+NOISE_AFFR_ASP = 0.3
+NOISE_FRICATIVE = 0.38
 SOFT_LIMIT = 0.55       # 軟限幅門檻（固定值，不隨音節浮動）
 
 # 共振器頻寬。母音要窄（共振峰才清楚），噪音要寬 —— 窄共振器打在白噪上
@@ -269,16 +278,16 @@ def synth_syllable(base, tone, dur_ms, f0_curve, debug=None):
     pre = []
     if kind == "stop":
         pre += [0.0] * _ms(35)                       # 成阻（靜音）
-        pre += _noise(_ms(6), 0.5)                   # 除阻爆破
+        pre += _noise(_ms(6), NOISE_STOP_BURST)      # 除阻爆破
         if aspirated:
-            pre += _noise(_ms(45), 0.28)             # 送氣
+            pre += _noise(_ms(45), NOISE_STOP_ASP)   # 送氣
     elif kind == "affricate":
         pre += [0.0] * _ms(25)
-        pre += _noise(_ms(55), 0.42)
+        pre += _noise(_ms(55), NOISE_AFFR_BURST)
         if aspirated:
-            pre += _noise(_ms(40), 0.3)
+            pre += _noise(_ms(40), NOISE_AFFR_ASP)
     elif kind == "fricative":
-        pre += _noise(_ms(90), 0.38)
+        pre += _noise(_ms(90), NOISE_FRICATIVE)
     elif kind == "nasal":
         pre += [0.0] * _ms(50)                       # 鼻音段另外處理
     elif kind in ("lateral", "approx"):

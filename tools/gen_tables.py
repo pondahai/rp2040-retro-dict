@@ -162,6 +162,16 @@ def main():
         emit(f, "#define SYN_FINAL_LENGTHEN_PCT %d"
              % int(round(prosody.FINAL_LENGTHEN * 100)))
         emit(f, "#define SYN_GAP_MS %d" % prosody.GAP_MS)
+        # 各噪音段的振幅（Q8）。以最大的那個（塞音爆破 0.5）當 256，其餘照
+        # 比例縮 —— syn_normalize() 會把整個聲母段重新正規化到目標響度，
+        # 所以絕對值不重要，重要的是段與段之間的比例。
+        _nmax = voice.NOISE_STOP_BURST
+        for _name, _v in (("STOP_BURST", voice.NOISE_STOP_BURST),
+                          ("STOP_ASP", voice.NOISE_STOP_ASP),
+                          ("AFFR_BURST", voice.NOISE_AFFR_BURST),
+                          ("AFFR_ASP", voice.NOISE_AFFR_ASP),
+                          ("FRICATIVE", voice.NOISE_FRICATIVE)):
+            emit(f, "#define SYN_NOISE_%s_Q8 %d" % (_name, q(_v / _nmax, 8)))
         # 單一音節的取樣點上限。**這個一定要由表算出來，不能手寫**：
         # 原本韌體寫死 4000（0.25 秒），是照「音素」的長度抓的，可是中文
         # 三聲就有 300ms，句末拉長後 345ms —— 於是每個三聲都被 syn_syllable()
