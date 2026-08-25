@@ -162,6 +162,15 @@ def main():
         emit(f, "#define SYN_FINAL_LENGTHEN_PCT %d"
              % int(round(prosody.FINAL_LENGTHEN * 100)))
         emit(f, "#define SYN_GAP_MS %d" % prosody.GAP_MS)
+        # 各類聲母的響度倍率（Q8），索引就是 SYN_K_*。C 端 syn_normalize()
+        # 拿它乘在 SYN_CONSONANT_LEVEL_Q8 上。
+        # **順序必須跟 synth_tables.h 的 SYN_K_* 列舉一致**：
+        # NONE=0 STOP=1 AFFRICATE=2 FRICATIVE=3 NASAL=4 LATERAL=5 APPROX=6 GLIDE=7
+        # 寫反了不會編譯失敗，只會把倍率套到錯的聲母上。
+        _kinds = ("none", "stop", "affricate", "fricative", "nasal",
+                  "lateral", "approx", "glide")
+        emit(f, "static const uint16_t SYN_KIND_LEVEL_Q8[8] = { %s };"
+             % ", ".join(str(q(voice.KIND_LEVEL.get(k, 1.0), 8)) for k in _kinds))
         # 各噪音段的振幅（Q8）。以最大的那個（塞音爆破 0.5）當 256，其餘照
         # 比例縮 —— syn_normalize() 會把整個聲母段重新正規化到目標響度，
         # 所以絕對值不重要，重要的是段與段之間的比例。

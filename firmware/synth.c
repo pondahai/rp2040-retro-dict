@@ -172,11 +172,11 @@ static inline int16_t clamp16(double v)
 }
 
 void syn_normalize(const int32_t *in, int n, int pre_len,
-                   int quiet_consonant, int16_t *out)
+                   int cons_q8, int quiet_consonant, int16_t *out)
 {
     const double target = 32767.0 * SYN_TARGET_RMS_Q15 / 32768.0;
     const double limit = 32767.0 * SYN_SOFT_LIMIT_Q15 / 32768.0;
-    const double cons = (double)SYN_CONSONANT_LEVEL_Q8 / 256.0;
+    const double cons = (double)cons_q8 / 256.0;
     double r, g, gpre = 0.0;
     int i;
 
@@ -449,6 +449,7 @@ int syn_syllable_ctx(syn_state *s, uint16_t syl_id, int prev_tone, int is_final,
     }
 
     syn_normalize(work, written, pre_len,
+                  SYN_CONSONANT_LEVEL_Q8 * SYN_KIND_LEVEL_Q8[kind] / 256,
                   kind != SYN_K_NASAL && kind != SYN_K_LATERAL &&
                   kind != SYN_K_APPROX && kind != SYN_K_NONE, out);
     return written;
@@ -665,7 +666,11 @@ int syn_phoneme_ctx(syn_state *s, uint16_t ph_id, syn_en_ctx *ctx,
         }
     }
 
-    syn_normalize(work, written, pre_len,
+    /* 英文**不套** SYN_KIND_LEVEL_Q8。那張表是從 voice.py 的 KIND_LEVEL 產生
+     * 的，而 english.py 的 synth() 是 pre_len=0 呼叫 render()，Python 端的英文
+     * 根本不走聲母響度那條路 —— 這裡套下去會製造一個 compare_synth.py 驗不到
+     * 的分歧。英文的子音相對響度由 speech.c 的 KIND_GAIN 管。 */
+    syn_normalize(work, written, pre_len, SYN_CONSONANT_LEVEL_Q8,
                   kind == SYN_K_STOP || kind == SYN_K_AFFRICATE ||
                   kind == SYN_K_FRICATIVE, out);
     return written;

@@ -56,8 +56,15 @@ int syn_render(syn_state *s, const syn_frame *fr, int n,
 /* 響度正規化 + 軟限幅，並轉成 int16。**四步缺一不可**，見 U3-REPORT §4.6：
  * 擦音經過高 Q 共振器後可以比濁音大 1700 倍，只做整體正規化會讓母音
  * 完全聽不見。 */
+/* cons_q8 與 quiet_consonant 是**兩件事**，不要合併：
+ *   cons_q8         聲母段相對母音段的響度（Q8）。**一直都會套用**，
+ *                   傳 0 會把整個聲母段乘成靜音。一般是
+ *                   SYN_CONSONANT_LEVEL_Q8 * SYN_KIND_LEVEL_Q8[kind] / 256
+ *                   —— 分類別是因為塞擦音的爆破段有 55ms、是塞音的 9 倍長，
+ *                   同樣響度聽起來重得多。
+ *   quiet_consonant 只在包絡那一步多壓 0.9，給噪音類的子音用。 */
 void syn_normalize(const int32_t *in, int n, int pre_len,
-                   int quiet_consonant, int16_t *out);
+                   int cons_q8, int quiet_consonant, int16_t *out);
 
 /* --- 中文 --- */
 /* 把一個音節 id（.DAT 的 SYL_ZH 內容）算成波形。

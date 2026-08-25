@@ -24,6 +24,14 @@ GLOTTAL_GAIN = 260.0  # 補回低通吃掉的音量
 TARGET_RMS = 0.20     # 每個音節的目標響度
 CONSONANT_LEVEL = 0.45  # 聲母段相對母音段的響度
 
+# 各類聲母的響度倍率（乘在 CONSONANT_LEVEL 上）。沒列的是 1.0。
+#
+# 塞擦音（ㄓㄔㄗㄘㄐㄑ）單獨調低：它的爆破段有 55ms，是塞音的 9 倍長，
+# 同樣的響度聽起來就重得多 —— 實機回報「ㄔ ㄓ 的開頭太大聲」。
+# 注意這裡調的是**整段聲母的響度**，不是 NOISE_AFFR_BURST 那種段內的形狀：
+# syn_normalize() 會把整個聲母段重新正規化，所以改振幅改不動響度。
+KIND_LEVEL = {"affricate": 0.65}
+
 # 各噪音段的振幅。取名字是因為韌體端要用同一組值 —— 原本 C 端**所有噪音
 # 都用同一個振幅**，等於把「爆破強、送氣弱」這層結構抹平了，而
 # compare_synth.py 驗不到（擦音起頭的音節它刻意不比波形，只比母音段質心）。
@@ -175,7 +183,8 @@ def _ms(x):
     return int(SR * x / 1000.0)
 
 
-def render(src, track, bw_track, pre_len, quiet_consonant=True):
+def render(src, track, bw_track, pre_len, quiet_consonant=True,
+           cons_scale=1.0):
     """把聲源 + 共振峰軌跡 + 頻寬軌跡 算成波形。
 
     中文與英文共用這一段 —— 兩者的差別只在怎麼「排」出這三條軌跡，
@@ -222,7 +231,7 @@ def render(src, track, bw_track, pre_len, quiet_consonant=True):
             out[i] *= g
     pre_rms = _rms(out[:pre_len])
     if pre_rms > 1e-9:
-        g = (TARGET_RMS * CONSONANT_LEVEL) / pre_rms
+        g = (TARGET_RMS * CONSONANT_LEVEL * cons_scale) / pre_rms
         for i in range(pre_len):
             out[i] *= g
 
@@ -338,7 +347,8 @@ def synth_syllable(base, tone, dur_ms, f0_curve, debug=None):
                 for i in range(total)]
 
     return render(src, track, bw_track, len(pre),
-                  quiet_consonant=kind not in ("nasal", "lateral", "approx", "none"))
+                  quiet_consonant=kind not in ("nasal", "lateral", "approx", "none"),
+                  cons_scale=KIND_LEVEL.get(kind, 1.0))
 
 
 def _interp_curve(curve, p):
