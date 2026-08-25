@@ -326,6 +326,13 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
 
     g_pcm_n = 0;
     g_last_key_n = -1;          // 從這裡開始 g_pcm 的內容就不可信了
+
+    // 合成之前先把「合成中」畫出來。長的字要兩三百毫秒，在那之前畫面完全
+    // 沒有反應 —— 使用者不知道 Fn+1 有沒有按到。快取命中那條路不必，
+    // 它上面就 return 了，本來就沒有等待。
+    g_app.speaking = 2;
+    refresh_status();
+
     speech_init(&g_speech, pcm_sink, NULL, g_syn_work, g_syn_seg, g_syn_pcm8,
                 SPEAK_MAX_SEG);
     if (ids && nbytes >= 2) {
@@ -339,6 +346,8 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
     if (g_pcm_n <= 0) {
         // 合成一個取樣點都沒產出。低頻短嗶 = 「有收到 Fn+1，但沒東西可唸」，
         // 跟音訊路徑壞掉的卡答聲區分得開。
+        g_app.speaking = 0;
+        refresh_status();
         tone(200, 120);
         return;
     }

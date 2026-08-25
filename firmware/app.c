@@ -710,12 +710,15 @@ const char *app_bar(const app *a)
 const char *app_status(const app *a)
 {
     /* 注音模式下不顯示大小寫 —— 那時候字母鍵是注音，大寫沒有意義。
-     * 發音中在後面加一個「音」，這是唯一會在使用者沒按鍵時變動的狀態。 */
+     * 發音中在後面加一個「音」，這是唯一會在使用者沒按鍵時變動的狀態。
+     *
+     * 合成中用 ASCII 的 "..."，不是另一個漢字：FONT.BIN 只收字典與碼表
+     * **實際用到**的字，加一個新漢字就得確認它在裡面，ASCII 則一定有。 */
     if (a->dir == APP_CE)
-        return a->speaking ? "注 音" : "注";
+        return a->speaking == 2 ? "注 ..." : a->speaking ? "注 音" : "注";
     if (a->caps)
-        return a->speaking ? "英大 音" : "英大";
-    return a->speaking ? "英 音" : "英";
+        return a->speaking == 2 ? "英大 ..." : a->speaking ? "英大 音" : "英大";
+    return a->speaking == 2 ? "英 ..." : a->speaking ? "英 音" : "英";
 }
 
 void app_key(app *a, const key_event *ev)
