@@ -342,24 +342,6 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
         tone(200, 120);
         return;
     }
-    // 波形後面補一整個緩衝區的靜音。
-    //
-    // **這一段目前是診斷用的，不確定是不是最終解法。** 實機症狀是母音結尾
-    // 的字尾巴多一個爆音，而同一份波形在 PC 上是乾淨的。兩個可能：
-    //   (a) DMA 播完這個緩衝區時，另一個還留著上一次的舊資料被播出去
-    //   (b) class-D 在訊號停止時自己「啵」一聲（類比端的行為）
-    // 補靜音可以把兩者分開：如果是 (a)，爆音消失；如果是 (b)，爆音會往後
-    // 移一個緩衝區的時間（256ms）而不是消失。
-    {
-        int pad = AUDIO_BUFFER_SIZE;
-        if (g_pcm_n + pad > SPEAK_MAX_PCM)
-            pad = SPEAK_MAX_PCM - g_pcm_n;
-        if (pad > 0) {
-            memset(g_pcm + g_pcm_n, 128, (size_t)pad);   // 128 = 8-bit 無號的零位
-            g_pcm_n += pad;
-        }
-    }
-
     if (keyn > 0) {             // 記住這次的波形是誰的
         memcpy(g_last_key, key, (size_t)keyn);
         g_last_key_n = keyn;
@@ -618,15 +600,11 @@ void loop()
     // **不能只看 audio_is_source_active()。** 那個旗標的意思是「取樣點都
     // 混進緩衝區了」，不是「喇叭已經響完了」—— 混音器最多領先 DMA 一整個
     // AUDIO_BUFFER_SIZE，也就是 4096/16000 = **256ms**。短字整個塞得進一個
-    // 緩衝區，於是 active 在 DMA 才剛要開始播的時候就變成 false。
-    //
-    // 後果不是狀態列早收一下而已：refresh_status() 會在聲音還在響的時候
-    // 重畫，拖住主迴圈，等 DMA 播完這個緩衝區、另一個還沒被填成靜音，
-    // 就播出上一次留在裡面的舊資料。實機症狀是母音結尾的字尾巴多一個
-    // 爆音（聽起來像 /t/），cat 會變成 cash。
+    // 緩衝區，於是 active 在 DMA 才剛要開始播的時候就變成 false，右下角的
+    // 「音」會在聲音還在響的時候就收起來。
     //
     // 所以再等一個「聲音真的放完」的時間：取樣點數 / 取樣率，再加一個
-    // 緩衝區的餘裕。
+    // 緩衝區的餘裕。純粹是狀態列的正確性，跟音質無關。
     if (g_app.speaking && g_speak_src >= 0 &&
         !audio_is_source_active(g_speak_src) &&
         (int32_t)(millis() - g_speak_done_ms) >= 0) {
