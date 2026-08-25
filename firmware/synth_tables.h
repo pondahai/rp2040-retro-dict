@@ -557,7 +557,7 @@ static const uint16_t SYN_TONE_DUR[5] = { 120, 230, 240, 300, 200 };
 static const uint16_t SYN_NEUTRAL_AFTER_Q8[5] = { 154, 154, 159, 192, 115 };
 #define SYN_FINAL_LENGTHEN_PCT 115
 #define SYN_GAP_MS 60
-static const uint16_t SYN_KIND_LEVEL_Q8[8] = { 256, 256, 166, 256, 256, 256, 256, 256 };
+static const uint16_t SYN_KIND_LEVEL_Q8[8] = { 256, 179, 128, 256, 256, 256, 256, 256 };
 #define SYN_NOISE_STOP_BURST_Q8 256
 #define SYN_NOISE_STOP_ASP_Q8 143
 #define SYN_NOISE_AFFR_BURST_Q8 215
