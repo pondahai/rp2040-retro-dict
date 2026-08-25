@@ -42,6 +42,18 @@
 #define KEYS_DEBOUNCE_MS 30      /* 與 PicoApple2.ino 同規格 */
 #define KEYS_REPEAT_MS   400     /* 按住多久開始連發 */
 #define KEYS_RATE_MS     60      /* 連發間隔 */
+/* 連發還要**看過這麼多次掃描**才算數，不能只看時間。
+ *
+ * 掃描是每個主迴圈一次，而打一個字母會觸發候選重查（8 筆隨機 SD 讀）加
+ * 重畫，那一圈可能花上百毫秒。兩次掃描相隔 200ms 時，只看牆鐘時間的話
+ * firmware 分不出「按一下」和「按住 400ms」—— 單次按鍵就會被誤判成連發。
+ *
+ * 實機症狀：打 m 變成 mm，而且**跟前一個字有關** —— 前面打過 h/k 之後
+ * 那些候選的字模還在快取裡，重畫夠快就不會發生。字模快取的冷熱決定了
+ * 主迴圈的長短，於是看起來像「某些字母壞掉」。
+ *
+ * 掃描次數不會被慢迴圈灌水：迴圈慢，次數就累積得慢。 */
+#define KEYS_REPEAT_MIN_SCANS 3
 #define KEYS_MAX_EVENTS  8
 
 typedef struct {
@@ -57,6 +69,7 @@ typedef struct {
     uint32_t changed_ms[64];     /* 每一格最後一次變動的時間 */
     uint8_t  caps;
     uint8_t  repeat_rc;          /* 目前在連發的那一格，0xFF = 沒有 */
+    uint8_t  repeat_seen;        /* 那一格被連續看到按下幾次掃描 */
     uint32_t repeat_at;
     uint32_t last_ms;
 } keys;

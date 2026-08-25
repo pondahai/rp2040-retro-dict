@@ -75,6 +75,7 @@ void keys_init(keys *k)
 {
     memset(k, 0, sizeof(*k));
     k->repeat_rc = 0xFF;
+    k->repeat_seen = 0;
 }
 
 /* 這些鍵是**命令**不是文字，連發沒有意義而且會出事：Fn+1 是發音，連發會
@@ -173,11 +174,16 @@ int keys_update(keys *k, const uint8_t rows[8], uint32_t now_ms,
                 n = emit(out, max, n, code, mods, 0);
                 k->repeat_rc = (uint8_t)rc;
                 k->repeat_at = now_ms + KEYS_REPEAT_MS;
-            } else if (down && k->repeat_rc == rc &&
-                       !is_command(code) &&
-                       (int32_t)(now_ms - k->repeat_at) >= 0) {
-                n = emit(out, max, n, code, mods, 1);
-                k->repeat_at = now_ms + KEYS_RATE_MS;
+                k->repeat_seen = 0;
+            } else if (down && k->repeat_rc == rc && !is_command(code)) {
+                if (k->repeat_seen < 255)
+                    k->repeat_seen++;
+                /* 時間到**而且**看過夠多次掃描才連發，見 KEYS_REPEAT_MIN_SCANS */
+                if (k->repeat_seen >= KEYS_REPEAT_MIN_SCANS &&
+                    (int32_t)(now_ms - k->repeat_at) >= 0) {
+                    n = emit(out, max, n, code, mods, 1);
+                    k->repeat_at = now_ms + KEYS_RATE_MS;
+                }
             }
         }
     }
@@ -185,8 +191,10 @@ int keys_update(keys *k, const uint8_t rows[8], uint32_t now_ms,
     /* 正在連發的那顆放開了就停 —— 不論放開的是不是同一顆。 */
     if (k->repeat_rc != 0xFF) {
         int rc = k->repeat_rc;
-        if (!((k->stable[rc >> 3] >> (rc & 7)) & 1))
+        if (!((k->stable[rc >> 3] >> (rc & 7)) & 1)) {
             k->repeat_rc = 0xFF;
+            k->repeat_seen = 0;
+        }
     }
 
     k->last_ms = now_ms;
