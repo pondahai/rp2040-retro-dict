@@ -122,6 +122,66 @@ static int selftest_keys(void)
     return bad ? 1 : 0;
 }
 
+/* ---- 連發不可以在鍵已經放開之後才觸發 ----
+ *
+ * 板子上掃描是每個主迴圈一次，而打一個字母要 8 筆隨機 SD 讀加重畫，
+ * 一圈可能 200ms。上面 run 模式的 tick 固定 5ms，**結構上永遠測不到
+ * 稀疏掃描** —— 實機那個「打 m 變 mm」就是這樣漏掉的。這裡直接餵
+ * keys_update() 稀疏的時間戳，不經過 app。
+ *
+ * 要抓的缺陷很具體：釋放要兩次掃描才會反映到 stable（第一次只記時間，
+ * 第二次過了 KEYS_DEBOUNCE_MS 才翻）。在那一次掃描裡 stable 還是 1，
+ * 如果連發只看 stable，就會在使用者**已經放開之後**補一個字出來。 */
+static int selftest_repeat(void)
+{
+    static const int SLOW = 200;         /* 一圈 200ms，模擬重畫拖慢主迴圈 */
+    keys k;
+    key_event ev[KEYS_MAX_EVENTS];
+    uint8_t rows[8];
+    int r = 0, c = 0, shift = 0, bad = 0, t, held, total = 0;
+
+    if (!find_key((uint8_t)'m', &r, &c, &shift))
+        return 1;
+
+    keys_init(&k);
+    memset(rows, 0, sizeof(rows));
+    for (t = 0; t <= 1400; t += SLOW) {
+        int n;
+        held = (t <= 600);               /* 按住到 600ms 就放開 */
+        rows[r] = held ? (uint8_t)(1 << c) : 0;
+        n = keys_update(&k, rows, (uint32_t)t, ev, KEYS_MAX_EVENTS);
+        total += n;
+        /* t=800 是「原始值已經是放開、但 stable 還沒翻」的那一次掃描。
+         * 這一刻不可以吐出任何東西。 */
+        if (t == 800 && n != 0) {
+            printf("  FAIL  鍵已放開，連發還吐了 %d 個事件%c", n, 10);
+            bad++;
+        }
+    }
+    if (total < 1) {
+        printf("  FAIL  按住 600ms 一個事件都沒有%c", 10);
+        bad++;
+    }
+
+    /* 真的按住不放，連發仍要發生 —— 修法不能把功能一起關掉。 */
+    keys_init(&k);
+    memset(rows, 0, sizeof(rows));
+    total = 0;
+    for (t = 0; t < 3000; t += SLOW) {
+        rows[r] = (uint8_t)(1 << c);
+        total += keys_update(&k, rows, (uint32_t)t, ev, KEYS_MAX_EVENTS);
+    }
+    if (total < 3) {
+        printf("  FAIL  稀疏掃描下按住 3 秒只有 %d 個事件（連發沒作用）%c",
+               total, 10);
+        bad++;
+    }
+
+    printf(bad ? "連發自我檢查 %d 項不合格%c" : "連發自我檢查通過%c",
+           bad ? bad : 10, bad ? 10 : 10);
+    return bad ? 1 : 0;
+}
+
 /* ---- 把一顆鍵反查回矩陣座標 ---- */
 
 static int find_key(uint8_t code, int *row, int *col, int *shift)
@@ -373,7 +433,7 @@ int main(int argc, char **argv)
     mode = argv[2];
 
     if (strcmp(mode, "keys") == 0)
-        return selftest_keys();
+        return selftest_keys() | selftest_repeat();
 
     if (argc < 5) {
         fprintf(stderr, "用法：test_app <DICT目錄> run <腳本> <輸出前綴>\n");

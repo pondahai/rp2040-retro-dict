@@ -75,7 +75,6 @@ void keys_init(keys *k)
 {
     memset(k, 0, sizeof(*k));
     k->repeat_rc = 0xFF;
-    k->repeat_seen = 0;
 }
 
 /* 這些鍵是**命令**不是文字，連發沒有意義而且會出事：Fn+1 是發音，連發會
@@ -155,6 +154,17 @@ int keys_update(keys *k, const uint8_t rows[8], uint32_t now_ms,
         for (c = 0; c < 8; c++) {
             int rc = r * 8 + c;
             int down = (k->stable[r] >> c) & 1;
+            /* **連發要看原始掃描值，不是去彈跳後的值。**
+             *
+             * 釋放要兩次掃描才會反映到 stable（第一次只記時間，第二次過了
+             * KEYS_DEBOUNCE_MS 才翻）。掃描是每個主迴圈一次，而打一個字母
+             * 要 8 筆隨機 SD 讀加重畫 —— 一圈可能 200ms，於是 stable 會在
+             * 使用者早就放開之後還維持 1 長達數百毫秒，連發就在那時候觸發。
+             * 實機症狀是打 m 變 mm、接著打 a 變 aa、連 BACK 都一次刪兩個。
+             *
+             * 去彈跳是為了濾掉假的**邊緣**；「現在還按著嗎」這個問題，最新
+             * 的原始取樣才是最可信的證據。偶爾漏讀一次只會延後連發，無害。 */
+            int raw_down = (k->pending[r] >> c) & 1;
             uint8_t code;
             int shift;
 
@@ -174,16 +184,11 @@ int keys_update(keys *k, const uint8_t rows[8], uint32_t now_ms,
                 n = emit(out, max, n, code, mods, 0);
                 k->repeat_rc = (uint8_t)rc;
                 k->repeat_at = now_ms + KEYS_REPEAT_MS;
-                k->repeat_seen = 0;
-            } else if (down && k->repeat_rc == rc && !is_command(code)) {
-                if (k->repeat_seen < 255)
-                    k->repeat_seen++;
-                /* 時間到**而且**看過夠多次掃描才連發，見 KEYS_REPEAT_MIN_SCANS */
-                if (k->repeat_seen >= KEYS_REPEAT_MIN_SCANS &&
-                    (int32_t)(now_ms - k->repeat_at) >= 0) {
-                    n = emit(out, max, n, code, mods, 1);
-                    k->repeat_at = now_ms + KEYS_RATE_MS;
-                }
+            } else if (down && raw_down && k->repeat_rc == rc &&
+                       !is_command(code) &&
+                       (int32_t)(now_ms - k->repeat_at) >= 0) {
+                n = emit(out, max, n, code, mods, 1);
+                k->repeat_at = now_ms + KEYS_RATE_MS;
             }
         }
     }
@@ -191,9 +196,9 @@ int keys_update(keys *k, const uint8_t rows[8], uint32_t now_ms,
     /* 正在連發的那顆放開了就停 —— 不論放開的是不是同一顆。 */
     if (k->repeat_rc != 0xFF) {
         int rc = k->repeat_rc;
-        if (!((k->stable[rc >> 3] >> (rc & 7)) & 1)) {
+        if (!((k->stable[rc >> 3] >> (rc & 7)) & 1) ||
+            !((k->pending[rc >> 3] >> (rc & 7)) & 1)) {
             k->repeat_rc = 0xFF;
-            k->repeat_seen = 0;
         }
     }
 
