@@ -1,4 +1,6 @@
-#include <stddef.h>          /* NULL —— MSVC 靠別的標頭間接帶進來，GCC 不會 */
+#include <stddef.h>          /* NULL、memcpy —— MSVC 靠別的標頭間接帶進來，
+                             * GCC 不會。PC build 過了不代表板子 build 會過。 */
+#include <string.h>
 
 #include "speech.h"
 
@@ -166,23 +168,77 @@ int speech_ids(speech *sp, const uint8_t *ids, int nbytes, int is_zh)
     return sp->samples;
 }
 
-int speech_letters(speech *sp, const char *ascii)
+/* 一個字母／數字的**名字**（a 唸 "ei"、b 唸 "bi:"）。回傳有沒有唸出東西。 */
+static int spell_one(speech *sp, char c)
+{
+    int row, k;
+    if (c >= 'A' && c <= 'Z')
+        c = (char)(c + 32);
+    if (c >= 'a' && c <= 'z')
+        row = c - 'a';
+    else if (c >= '0' && c <= '9')
+        row = 26 + (c - '0');
+    else
+        return 0;            /* 標點與空白不唸 */
+    for (k = 0; k < SPELL_MAX_PH && SPELL_IDS[row][k]; k++)
+        /* 逐字母唸不降調：每個字母是各自獨立的一次發音，不是一個詞。 */
+        one(sp, SPELL_IDS[row][k], 0, SYN_TONE_NONE, 0, NULL);
+    return k > 0;
+}
+
+/* 一段（一個「字」）走字母規則。 */
+static void letters_one_word(speech *sp, const char *word, int len)
 {
     uint16_t ids[LTS_MAX_PH_PER_WORD * 4];
+    char buf[LTS_MAX_WORD];
+    syn_en_ctx en;
     int n, i;
+
+    if (len <= 0)
+        return;
+    if (len > (int)sizeof(buf) - 1)
+        len = (int)sizeof(buf) - 1;
+    memcpy(buf, word, (size_t)len);
+    buf[len] = 0;
+
+    n = lts_to_ids(buf, ids, (int)(sizeof(ids) / sizeof(ids[0])));
+    syn_en_ctx_init(&en, syn_en_count_vowels(ids, n));
+    for (i = 0; i < n; i++)
+        one(sp, ids[i], 0, SYN_TONE_NONE, 0, &en);
+}
+
+int speech_letters(speech *sp, const char *ascii)
+{
+    const char *p = ascii;
 
     sp->samples = 0;
     if (!ascii)
         return 0;
-    n = lts_to_ids(ascii, ids, (int)(sizeof(ids) / sizeof(ids[0])));
-    {
-        syn_en_ctx en;
-        int nv = 0;
-        for (i = 0; i < n; i++)
-            nv += syn_en_is_vowel(ids[i]);
-        syn_en_ctx_init(&en, nv);
-        for (i = 0; i < n; i++)
-            one(sp, ids[i], 0, SYN_TONE_NONE, 0, &en);
+
+    /* 逐「字」處理，因為**單獨一個字母要唸它的名字，不是字母規則的結果**。
+     *
+     * lts.c 把 b 推成 /b/ —— 一個 53ms、大半是成阻靜音的爆破音，實機上
+     * 幾乎聽不見。但字串裡孤零零的一個字母通常是縮寫（T V、U S A、
+     * vitamin C），使用者要聽的是「bi:」這個字母名。
+     *
+     * 兩個以上字母的才走字母規則：那才是「這個字大概怎麼唸」的問題。 */
+    while (*p) {
+        const char *start;
+        int len;
+
+        while (*p == ' ' || *p == '-')
+            p++;
+        if (!*p)
+            break;
+        start = p;
+        while (*p && *p != ' ' && *p != '-')
+            p++;
+        len = (int)(p - start);
+
+        if (len == 1)
+            spell_one(sp, start[0]);
+        else
+            letters_one_word(sp, start, len);
     }
     return sp->samples;
 }
@@ -192,22 +248,8 @@ int speech_spell(speech *sp, const char *ascii)
     sp->samples = 0;
     if (!ascii)
         return 0;
-    for (; *ascii; ascii++) {
-        char c = *ascii;
-        int row;
-        int k;
-        if (c >= 'A' && c <= 'Z')
-            c = (char)(c + 32);
-        if (c >= 'a' && c <= 'z')
-            row = c - 'a';
-        else if (c >= '0' && c <= '9')
-            row = 26 + (c - '0');
-        else
-            continue;        /* 標點與空白不唸 */
-        for (k = 0; k < SPELL_MAX_PH && SPELL_IDS[row][k]; k++)
-            /* 逐字母唸不降調：每個字母是各自獨立的一次發音，
-             * 不是一個詞。 */
-            one(sp, SPELL_IDS[row][k], 0, SYN_TONE_NONE, 0, NULL);
-    }
+    for (; *ascii; ascii++)
+        spell_one(sp, *ascii);
     return sp->samples;
 }
+
