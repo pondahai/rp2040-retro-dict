@@ -223,6 +223,7 @@ static font g_font_dev;
 #define SPEAK_KEY_MAX   96
 static uint8_t g_last_key[SPEAK_KEY_MAX];
 static int g_last_key_n = -1;       // <0 = 沒有有效的快取
+static uint32_t g_speak_done_ms;    // 預計聲音真的放完的時刻
 static int32_t g_syn_work[SPEAK_MAX_SEG];
 static int16_t g_syn_seg[SPEAK_MAX_SEG];
 static uint8_t g_syn_pcm8[SPEAK_MAX_SEG];
@@ -353,6 +354,11 @@ static void speak_play(void)
     g_speak_src = audio_play_once(g_pcm, g_pcm_n);
     if (g_speak_src >= 0)
         audio_source_set_volume(g_speak_src, SPEAK_VOLUME);
+    // 預計什麼時候真的放完：波形本身的長度，加上混音器領先 DMA 的那一個
+    // 緩衝區。寧可晚收「音」字，也不要在聲音還在響的時候重畫。
+    g_speak_done_ms = millis()
+                    + (uint32_t)((int64_t)g_pcm_n * 1000 / SYN_SR)
+                    + (uint32_t)((int64_t)AUDIO_BUFFER_SIZE * 1000 / SYN_SR);
     g_app.speaking = 1;
     refresh_status();
 }
@@ -365,6 +371,7 @@ static keys g_keys;
 // 一次一百多毫秒，音訊緩衝區會來不及填而斷音（那正是「aaaaple」的成因）。
 static void blit_rows(int y0, int h)
 {
+    audio_mixer_step();          // SPI 傳送期間沒人餵音訊，先補一次
     tft.startFrame(0, y0, UI_W - 1, y0 + h - 1);
     for (int y = y0; y < y0 + h; y++) {
         uint8_t *buf = g_line[y & 1];
@@ -576,8 +583,9 @@ void loop()
         app_key(&g_app, &ev[i]);
     }
 
-    // 緩衝區只有 1024 個樣本（16kHz 下 64ms），所以每一圈都要餵。查詞或
-    // 重畫畫面會佔掉幾十毫秒，這也是為什麼發音時不要同時做那些事。
+    // 緩衝區是 AUDIO_BUFFER_SIZE 個樣本（4096，16kHz 下 256ms），雙緩衝。
+    // 每一圈都要餵：查詞或重畫畫面會佔掉幾十到上百毫秒，這也是為什麼
+    // 發音時不要同時做那些事。
     audio_mixer_step();
 
     // CapsLock 是修飾鍵，**不會產生按鍵事件** —— 所以不能等 app_key() 來更新
@@ -588,8 +596,22 @@ void loop()
     }
 
     // 播完了就把「音」收起來。只重畫右下角那一格，不整頁重畫。
+    //
+    // **不能只看 audio_is_source_active()。** 那個旗標的意思是「取樣點都
+    // 混進緩衝區了」，不是「喇叭已經響完了」—— 混音器最多領先 DMA 一整個
+    // AUDIO_BUFFER_SIZE，也就是 4096/16000 = **256ms**。短字整個塞得進一個
+    // 緩衝區，於是 active 在 DMA 才剛要開始播的時候就變成 false。
+    //
+    // 後果不是狀態列早收一下而已：refresh_status() 會在聲音還在響的時候
+    // 重畫，拖住主迴圈，等 DMA 播完這個緩衝區、另一個還沒被填成靜音，
+    // 就播出上一次留在裡面的舊資料。實機症狀是母音結尾的字尾巴多一個
+    // 爆音（聽起來像 /t/），cat 會變成 cash。
+    //
+    // 所以再等一個「聲音真的放完」的時間：取樣點數 / 取樣率，再加一個
+    // 緩衝區的餘裕。
     if (g_app.speaking && g_speak_src >= 0 &&
-        !audio_is_source_active(g_speak_src)) {
+        !audio_is_source_active(g_speak_src) &&
+        (int32_t)(millis() - g_speak_done_ms) >= 0) {
         g_app.speaking = 0;
         g_speak_src = -1;
         refresh_status();
