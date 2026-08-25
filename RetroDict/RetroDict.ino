@@ -342,6 +342,24 @@ static void on_speak(void *ctx, const uint8_t *ids, int nbytes, int is_zh,
         tone(200, 120);
         return;
     }
+    // 波形後面補一整個緩衝區的靜音。
+    //
+    // **這一段目前是診斷用的，不確定是不是最終解法。** 實機症狀是母音結尾
+    // 的字尾巴多一個爆音，而同一份波形在 PC 上是乾淨的。兩個可能：
+    //   (a) DMA 播完這個緩衝區時，另一個還留著上一次的舊資料被播出去
+    //   (b) class-D 在訊號停止時自己「啵」一聲（類比端的行為）
+    // 補靜音可以把兩者分開：如果是 (a)，爆音消失；如果是 (b)，爆音會往後
+    // 移一個緩衝區的時間（256ms）而不是消失。
+    {
+        int pad = AUDIO_BUFFER_SIZE;
+        if (g_pcm_n + pad > SPEAK_MAX_PCM)
+            pad = SPEAK_MAX_PCM - g_pcm_n;
+        if (pad > 0) {
+            memset(g_pcm + g_pcm_n, 128, (size_t)pad);   // 128 = 8-bit 無號的零位
+            g_pcm_n += pad;
+        }
+    }
+
     if (keyn > 0) {             // 記住這次的波形是誰的
         memcpy(g_last_key, key, (size_t)keyn);
         g_last_key_n = keyn;
