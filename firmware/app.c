@@ -62,6 +62,53 @@ static void refresh_cands(app *a)
     if (n < 0)
         n = 0;
 
+    /* 打進去的字本身如果字典裡有，就讓它當第一列。
+     *
+     * 候選是**常用詞優先**排的（FORMAT.md §8 的 ECC.IDX），所以打 cat 第一個
+     * 會是 catch、打 b 第一個會是 back —— 更常用的前綴詞蓋過了完全相符的
+     * 那個。使用者打完一個完整的字，卻看到別的字反白。
+     *
+     * 兩種情況要分開：
+     *   1. 完全相符的那筆**有**在候選裡（cat）—— 搬到第一位就好
+     *   2. 它連進候選都沒進來（b、co：前八名全被更常用的詞佔滿）—— 得再查
+     *      一次把它撈進來，擠掉最後一列
+     * 只有 (1) 的話，b 跟 co 這種常見情況修不到。
+     *
+     * 不動排序策略本身：常用詞優先對「打一半」仍然是對的，這裡處理的是
+     * 「已經打完一個完整的字」那一種。 */
+    {
+        int at = -1;
+        for (i = 0; i < n; i++) {
+            uint32_t kl = 0;
+            while (kl < DICT_KEY24 && hits[i].key24[kl])
+                kl++;
+            if (kl == klen && memcmp(hits[i].key24, key, klen) == 0) {
+                at = i;
+                break;
+            }
+        }
+        if (at > 0) {                       /* 情況 1：搬上來 */
+            dict_entry tmp = hits[at];
+            memmove(&hits[1], &hits[0], (size_t)at * sizeof(hits[0]));
+            hits[0] = tmp;
+        } else if (at < 0) {                /* 情況 2：撈進來 */
+            dict_entry exact;
+            /* 純字母序（common_first=0）時，完全相符的那筆一定排最前面：
+             * cat < catch < category。所以取一筆就夠。 */
+            if (dict_prefix(a->d, key, klen, &exact, 1, 128, 0) == 1) {
+                uint32_t kl = 0;
+                while (kl < DICT_KEY24 && exact.key24[kl])
+                    kl++;
+                if (kl == klen && memcmp(exact.key24, key, klen) == 0) {
+                    if (n < limit)
+                        n++;
+                    memmove(&hits[1], &hits[0], (size_t)(n - 1) * sizeof(hits[0]));
+                    hits[0] = exact;
+                }
+            }
+        }
+    }
+
     for (i = 0; i < n; i++) {
         dict_record rec;
         uint32_t kl = 0;
@@ -284,6 +331,26 @@ static void speak_typing(app *a)
             a->speak(a->speak_ctx, a->syl, sn, is_zh, a->cand_word[a->sel]);
         return;                 /* 查不到就安靜 —— 中文沒有字母規則可以退 */
     }
+    /* 英漢的打字畫面，光棒在第一列時：唸**搜尋列裡的字串**。
+     *
+     * 使用者按 Fn+1 想聽的是自己打的字。候選是常用詞優先排的，所以打 cat
+     * 反白的可能是 catch —— 唸反白的那個就變成「打 cat 聽到 catch」。
+     * 中文那邊本來就是唸打進去的字（見下面的 syl_of_text），這裡跟它一致。
+     *
+     * 字典裡查得到就用它的音標；查不到（或沒有音標）就交給呼叫端用
+     * lts.c 的字母規則現場推。
+     *
+     * 光棒離開第一列就不走這條 —— 那代表使用者主動挑了別的字。 */
+    if (a->dir == APP_EC && a->typed_len && a->sel == 0) {
+        uint16_t sn = syl_of_word(a, a->typed, &is_zh);
+        if (sn)
+            a->speak(a->speak_ctx, a->syl, sn, is_zh, a->typed);
+        else
+            a->speak(a->speak_ctx, 0, 0, 0, a->typed);
+        return;
+    }
+    /* 光棒離開第一列 = 使用者主動挑了別的字，那就唸他挑的那個
+     * （底下那段會抓 cand[sel] 的 SYL_EN）。 */
     if (a->cand_n && a->sel < a->cand_n &&
         a->cand_len[a->sel] <= sizeof(a->blob) &&
         a->d->read_dat(a->d->dat_ctx, a->cand_off[a->sel],
