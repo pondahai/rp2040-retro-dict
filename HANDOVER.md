@@ -132,10 +132,15 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
 需要 arduino-cli 與 `rp2040:rp2040` 5.6.1。SD 卡要有 `/DICT/`
 （`EC.IDX`、`EC.DAT`、`ECC.IDX`、`FONT.BIN`）。
 
-實測佈局：image `0x10004000..0x10038d00`（216,320 bytes），上限 `0x101ff000`，
-餘裕 1,860,352 bytes。向量表 `SP=0x20042000 Reset=0x100040e3`，
+實測佈局（2026-08-25 重編）：image `0x10004000..0x10039100`（217,344 bytes），
+上限 `0x101ff000`，餘裕 1,859,328 bytes。向量表 `SP=0x20042000 Reset=0x100040e3`，
 載入器 `app_present()` 的條件都通過。
-合併跳板後 `RetroDict_standalone.uf2` 909 blocks（465,408 bytes）。封面圖
+
+⚠️ 上面的 217,344 是**燒進 flash 的 image 大小**，不是 uf2 檔案大小。UF2 一個
+block 是 512 bytes 但只裝 256 bytes 酬載，所以檔案約是 image 的兩倍：
+`RetroDict.ino.uf2` 849 blocks = 434,688 bytes，合併跳板後的
+`RetroDict_standalone.uf2` 913 blocks（跳板 12 + 本體 849 + 填充 52）
+= 467,456 bytes。引用時別把 image 大小當成檔案大小。封面圖
 `assets/RetroDict.ino.RAW` 也會被複製到 `build_offset/`，與 uf2 同放 SD 根目錄。
 
 ---
