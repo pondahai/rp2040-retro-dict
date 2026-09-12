@@ -3,8 +3,8 @@
 //
 // 這支 sketch 只做三件事：
 //
-//   1. 把硬體叫起來（ILI9341、8x8 鍵盤矩陣、SD 卡）
-//   2. 掃矩陣 -> keys.c -> app.c
+//   1. 把硬體叫起來（ILI9341、8x8 鍵盤矩陣、D-pad、SD 卡）
+//   2. 掃矩陣 -> keys.c -> app.c（D-pad 的事件接在同一條流後面）
 //   3. app.c 說畫面髒了，就把 4bpp 畫布送上螢幕
 //
 // **邏輯一行都不在這裡。** 查詢（dict.c）、字模（font.c）、排版（ui.c）、
@@ -53,6 +53,17 @@ extern "C" {
 #define LATCH_PIN        14
 #define CLOCK_PIN        26
 #define DATA_IN_PIN      27
+
+// ---- 遊戲按鍵（8 顆直接接 GPIO，active-low、內部上拉）----
+// 接腳表的單一事實來源是 rp2040-retro-handheld/docs/HARDWARE.md。
+#define PIN_BTN_UP       9
+#define PIN_BTN_DOWN     5
+#define PIN_BTN_LEFT     8
+#define PIN_BTN_RIGHT    6
+#define PIN_BTN_A        2
+#define PIN_BTN_B        3
+#define PIN_BTN_SELECT   28
+#define PIN_BTN_START    4
 
 // ---- 喇叭 ----
 // PicoApple2 的 PIN_JACK_SND 與 InfoNES 的 audio_init(7, ...) 都是這一支。
@@ -149,6 +160,106 @@ static void scanMatrix(uint8_t rows[8])
         rows[row] = bits;
     }
     fastWrite(CLOCK_PIN, 1); delayMicroseconds(2); fastWrite(CLOCK_PIN, 0);
+}
+
+// ============================================================================
+// 遊戲按鍵（D-pad）—— 跟鍵盤矩陣同一種 key_event
+//
+// 為什麼需要它：鍵盤硬體**已經把方向鍵拿掉了**，矩陣上 UP/DOWN/LEFT/RIGHT/
+// PGUP/PGDN 那幾格現在空著（keys.c 的真值表留著是為了 PC 上的測試腳本）。
+// 選候選字與翻頁因此改由這 8 顆負責。
+//
+//   方向    KEY_UP / KEY_DOWN / KEY_LEFT / KEY_RIGHT
+//   A       KEY_PGUP
+//   B       KEY_PGDN
+//
+// 這一套跟矩陣是完全獨立的硬體：active-low、內部上拉、直接 gpio_get()，
+// 不經過 74HC165。事件接在矩陣掃描的結果後面，共用同一條流 —— app.c
+// 分不出來也不需要分。
+//
+// 去彈跳與連發的參數刻意跟 keys.c 一致（KEYS_DEBOUNCE_MS / KEYS_REPEAT_MS /
+// KEYS_RATE_MS），不然同一個畫面上兩種按鍵的手感會不一樣。
+// 做法照搬 rp2040-retro-editor/src/hw_dpad.c，那是同一塊板子同一組 GPIO。
+// ============================================================================
+
+static const struct { uint8_t gpio; uint8_t code; } BTN[] = {
+    { PIN_BTN_UP,     KEY_UP    },
+    { PIN_BTN_DOWN,   KEY_DOWN  },
+    { PIN_BTN_LEFT,   KEY_LEFT  },
+    { PIN_BTN_RIGHT,  KEY_RIGHT },
+    { PIN_BTN_A,      KEY_PGUP  },
+    { PIN_BTN_B,      KEY_PGDN  },
+};
+#define BTN_N ((int)(sizeof BTN / sizeof BTN[0]))
+
+static uint8_t  g_btn_stable;            // 去彈跳後的狀態，每顆一個 bit
+static uint8_t  g_btn_pending;           // 上一次讀到的原始狀態
+static uint32_t g_btn_changed_ms[BTN_N];
+static int      g_btn_repeat_i = -1;     // 正在連發的那顆
+static uint32_t g_btn_repeat_at;
+
+static void dpadInit()
+{
+    // SELECT(28) / START(4) 這裡沒用到，就不去動它們的腳位設定。
+    for (int i = 0; i < BTN_N; i++) {
+        gpio_init(BTN[i].gpio);
+        gpio_set_dir(BTN[i].gpio, GPIO_IN);
+        gpio_pull_up(BTN[i].gpio);       // active-low
+    }
+    g_btn_stable = g_btn_pending = 0;
+    g_btn_repeat_i = -1;
+}
+
+static int dpadEmit(int n, key_event *out, int max, uint8_t code, int repeat)
+{
+    if (n >= max)
+        return n;                        // 佇列滿了就丟掉 —— 掃描頻率遠高於人手
+    out[n].code = code;
+    out[n].mods = 0;
+    out[n].repeat = (uint8_t)repeat;
+    return n + 1;
+}
+
+// 掃一次，把按鍵轉成事件接在 out 後面。n 是 out 裡已經有的事件數。
+static int dpadPoll(int n, key_event *out, int max)
+{
+    uint32_t now = millis();
+    uint8_t raw = 0;
+
+    for (int i = 0; i < BTN_N; i++)
+        if (!gpio_get(BTN[i].gpio))      // active-low：拉低 = 按下
+            raw |= (uint8_t)(1u << i);
+
+    for (int i = 0; i < BTN_N; i++) {
+        uint8_t bit = (uint8_t)(1u << i);
+        int now_down  = (raw & bit) != 0;
+        int was_down  = (g_btn_pending & bit) != 0;
+        int is_stable = (g_btn_stable & bit) != 0;
+
+        if (now_down != was_down) {
+            g_btn_changed_ms[i] = now;   // 狀態剛變，開始計時
+        } else if (now_down != is_stable &&
+                   (int32_t)(now - g_btn_changed_ms[i]) >= KEYS_DEBOUNCE_MS) {
+            // 穩定超過去彈跳窗才承認
+            g_btn_stable = (uint8_t)(now_down ? (g_btn_stable | bit)
+                                              : (g_btn_stable & ~bit));
+            if (now_down) {
+                n = dpadEmit(n, out, max, BTN[i].code, 0);
+                g_btn_repeat_i = i;
+                g_btn_repeat_at = now + KEYS_REPEAT_MS;
+            } else if (g_btn_repeat_i == i) {
+                g_btn_repeat_i = -1;
+            }
+        } else if (now_down && is_stable && g_btn_repeat_i == i &&
+                   (int32_t)(now - g_btn_repeat_at) >= 0) {
+            // 按住不放 -> 連發。方向鍵沒有連發的話，選候選字得一下一下點。
+            n = dpadEmit(n, out, max, BTN[i].code, 1);
+            g_btn_repeat_at = now + KEYS_RATE_MS;
+        }
+    }
+
+    g_btn_pending = raw;
+    return n;
 }
 
 // ============================================================================
@@ -510,6 +621,7 @@ void setup()
     gpio_init(LATCH_PIN);    gpio_set_dir(LATCH_PIN, GPIO_OUT);
     gpio_init(CLOCK_PIN);    gpio_set_dir(CLOCK_PIN, GPIO_OUT);
     gpio_init(DATA_IN_PIN);  gpio_set_dir(DATA_IN_PIN, GPIO_IN);
+    dpadInit();
 
     display_begin();
     fbuf_init(&g_fb);
@@ -579,6 +691,8 @@ void loop()
 
     scanMatrix(rows);
     int n = keys_update(&g_keys, rows, millis(), ev, KEYS_MAX_EVENTS);
+    // D-pad 的事件接在矩陣後面，共用同一個佇列。
+    n = dpadPoll(n, ev, KEYS_MAX_EVENTS);
     for (int i = 0; i < n; i++) {
         // Fn+9 = 音訊自我測試。留著是因為它當初把「合成沒產出」與「音訊路徑
         // 壞掉」兩種一模一樣的卡答聲分開了，下次接線動到還會需要。

@@ -30,6 +30,7 @@
 | UI 排版 | C 實作完成，與 Python 預覽**逐像素**相同（含捲動） |
 | 4bpp 畫布 | 完成，`firmware/fbuf.c`，37.5 KB |
 | 鍵盤解碼 | 完成，`firmware/keys.c`，用實測真值表 |
+| D-pad | 完成，8 顆遊戲按鍵接在 `RetroDict.ino`，事件併入同一條流；方向鍵→`KEY_UP/DOWN/LEFT/RIGHT`、A→`KEY_PGUP`、B→`KEY_PGDN` |
 | 前景狀態機 | 完成，`firmware/app.c`，兩個畫面 |
 | 板子端 sketch | **已上機**：畫面、鍵盤、SD 都會動 |
 | 偏移版編譯 | 完成，`build_offset.bat`，佈局檢查通過 |
@@ -198,6 +199,33 @@ block 是 512 bytes 但只裝 256 bytes 酬載，所以檔案約是 image 的兩
 200ms 間隔的時間戳，斷言「原始值已經放開、stable 還沒翻」那一次掃描不可以
 吐出事件。拿掉修法驗過會紅。**run 模式測不到這個** —— 它的 tick 固定 5ms，
 掃描永遠不會稀疏。
+
+### D-pad 補上鍵盤拿掉的方向鍵（2026-09-12）
+
+鍵盤硬體已經把方向鍵拿掉了，矩陣上 UP/DOWN/LEFT/RIGHT/PGUP/PGDN 那幾格空著
+（`keys.c` 的真值表**刻意留著**，PC 上的測試腳本還在用那些格子餵事件）。
+選候選字與翻頁改由 8 顆直接接 GPIO 的遊戲按鍵負責：UP 9 / DOWN 5 / LEFT 8 /
+RIGHT 6 / A 2 / B 3，active-low、內部上拉，接腳表的單一事實來源是
+`rp2040-retro-handheld/docs/HARDWARE.md`。SELECT/START 目前沒用到。
+
+實作在 `RetroDict/RetroDict.ino`（`dpadInit()` / `dpadPoll()`），不是新開一個
+純 C 檔 —— 它直接 `gpio_get()`，屬於硬體那一層，而板子端唯一碰硬體的檔案就是
+這支 sketch。做法照搬 `rp2040-retro-editor/src/hw_dpad.c`（同一塊板子同一組
+GPIO），只有鍵碼對應不同（編輯器的 A/B 是 Enter/Esc）。
+
+兩件不要改掉的：
+
+- **去彈跳 30ms、連發 400ms 起跳 / 60ms 間隔**，跟 `keys.c` 的常數是同一組
+  （直接用 `KEYS_DEBOUNCE_MS` 等巨集，不要另外寫死數字）。不一致的話同一個
+  畫面上兩種按鍵的手感會差很多。
+- **方向鍵一定要有連發**，不然選候選字得一下一下點。
+
+事件接在 `keys_update()` 的結果後面共用同一個 `key_event` 佇列，所以 `app.c`
+完全不必改 —— 它分不出來也不需要分。
+
+注意 D-pad 這條路**不受**上面那條「連發不可以在鍵放開之後才觸發」的影響：
+那個 bug 的成因是矩陣的 `stable` 在稀疏掃描下會滯後，而這裡是直接讀 GPIO，
+連發判定看的 `is_stable` 與 `now_down` 來自同一次取樣。
 
 ### 打字畫面的 Fn+1 唸什麼（2026-08-25）
 
