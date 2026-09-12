@@ -30,7 +30,7 @@
 | UI 排版 | C 實作完成，與 Python 預覽**逐像素**相同（含捲動） |
 | 4bpp 畫布 | 完成，`firmware/fbuf.c`，37.5 KB |
 | 鍵盤解碼 | 完成，`firmware/keys.c`，用實測真值表 |
-| D-pad | 完成，8 顆遊戲按鍵接在 `RetroDict.ino`，事件併入同一條流；方向鍵→`KEY_UP/DOWN/LEFT/RIGHT`、A→`KEY_PGUP`、B→`KEY_PGDN` |
+| D-pad | 完成，8 顆遊戲按鍵接在 `RetroDict.ino`，事件併入同一條流；方向鍵→`KEY_UP/DOWN/LEFT/RIGHT`、A→`KEY_PGUP`、B/SELECT→`KEY_PGDN`、START→`KEY_F1`（發音） |
 | 前景狀態機 | 完成，`firmware/app.c`，兩個畫面 |
 | 板子端 sketch | **已上機**：畫面、鍵盤、SD 都會動 |
 | 偏移版編譯 | 完成，`build_offset.bat`，佈局檢查通過 |
@@ -67,7 +67,7 @@
 真正燒進板子的 `RetroDict/src/rd_*.c.o` —— 編譯旗標不同，數字就會差個幾 %。
 要比大小趨勢請確定兩邊是同一種 build，不要把 build 差異當成程式碼長胖。
 
-整支 sketch 編出來是 flash 211,716 B（10%）、靜態 RAM 202,440 B（77%）。
+整支 sketch 編出來是 flash 211,748 B（10%）、靜態 RAM 202,448 B（77%）。
 RAM 的組成（`arm-none-eabi-nm --size-sort -S`）：
 
 | | |
@@ -79,9 +79,9 @@ RAM 的組成（`arm-none-eabi-nm --size-sort -S`）：
 | 合成器音段 `g_syn_seg` ＋ 8bit 暫存 `g_syn_pcm8` | 16,752 |
 | 音訊 DMA（mixer + buffers） | 16,384 |
 | 前景狀態 `g_app` | 10,620 |
-| 其餘（SD 函式庫、USB、core1 堆疊…） | ~16,920 |
+| 其餘（SD 函式庫、USB、core1 堆疊…） | ~16,928 |
 
-⚠️ **RAM 只剩 23%**（59,704 bytes 給區域變數與堆積），arduino-cli 每次編譯都會
+⚠️ **RAM 只剩 23%**（59,696 bytes 給區域變數與堆積），arduino-cli 每次編譯都會
 警告「記憶體低容量」。跟 2026-08-23 那版（66%）差的 27KB 主要是發音那三塊長大了：
 `g_pcm` 24,000 -> 40,000、`g_syn_work` 16,000 -> 22,336、音段／暫存 12,000 -> 16,752。
 **再要加大型靜態緩衝之前先看這裡。**
@@ -216,8 +216,16 @@ block 是 512 bytes 但只裝 256 bytes 酬載，所以檔案約是 image 的兩
 鍵盤硬體已經把方向鍵拿掉了，矩陣上 UP/DOWN/LEFT/RIGHT/PGUP/PGDN 那幾格空著
 （`keys.c` 的真值表**刻意留著**，PC 上的測試腳本還在用那些格子餵事件）。
 選候選字與翻頁改由 8 顆直接接 GPIO 的遊戲按鍵負責：UP 9 / DOWN 5 / LEFT 8 /
-RIGHT 6 / A 2 / B 3，active-low、內部上拉，接腳表的單一事實來源是
-`rp2040-retro-handheld/docs/HARDWARE.md`。SELECT/START 目前沒用到。
+RIGHT 6 / A 2 / B 3 / SELECT 28 / START 4，active-low、內部上拉，接腳表的
+單一事實來源是 `rp2040-retro-handheld/docs/HARDWARE.md`。
+
+| 按鍵 | 鍵碼 | 連發 |
+|---|---|---|
+| 方向 | `KEY_UP` / `KEY_DOWN` / `KEY_LEFT` / `KEY_RIGHT` | 有 |
+| A | `KEY_PGUP` | 有 |
+| B | `KEY_PGDN` | 有 |
+| SELECT | `KEY_PGDN`（與 B 同碼，SELECT 是「往下翻」的通用習慣） | 有 |
+| START | `KEY_F1` —— 發音，等同鍵盤的 Fn+1 | **沒有** |
 
 實作在 `RetroDict/RetroDict.ino`（`dpadInit()` / `dpadPoll()`），不是新開一個
 純 C 檔 —— 它直接 `gpio_get()`，屬於硬體那一層，而板子端唯一碰硬體的檔案就是
@@ -230,6 +238,11 @@ GPIO），只有鍵碼對應不同（編輯器的 A/B 是 Enter/Esc）。
   （直接用 `KEYS_DEBOUNCE_MS` 等巨集，不要另外寫死數字）。不一致的話同一個
   畫面上兩種按鍵的手感會差很多。
 - **方向鍵一定要有連發**，不然選候選字得一下一下點。
+- **START 一定不可以連發。** `KEY_F1` 是發音，連發會讓一個字被打斷重唸好幾次
+  （實機症狀「ap ap approach」，見下面那段）。BTN 表第三欄就是這個開關 ——
+  跟 `keys.c` 的 `is_command()` 是同一個判斷，只是那支的版本是 static 沒匯出。
+  手指按著 START 本來就會比按方向鍵久：唸一次要先合成再重畫，很容易超過
+  400ms 門檻。
 
 事件接在 `keys_update()` 的結果後面共用同一個 `key_event` 佇列，所以 `app.c`
 完全不必改 —— 它分不出來也不需要分。

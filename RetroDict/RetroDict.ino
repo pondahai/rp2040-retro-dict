@@ -172,6 +172,8 @@ static void scanMatrix(uint8_t rows[8])
 //   方向    KEY_UP / KEY_DOWN / KEY_LEFT / KEY_RIGHT
 //   A       KEY_PGUP
 //   B       KEY_PGDN
+//   SELECT  KEY_PGDN —— 跟 B 同一個鍵碼，SELECT 是「往下翻」的通用習慣
+//   START   KEY_F1   —— 發音，等同鍵盤的 Fn+1
 //
 // 這一套跟矩陣是完全獨立的硬體：active-low、內部上拉、直接 gpio_get()，
 // 不經過 74HC165。事件接在矩陣掃描的結果後面，共用同一條流 —— app.c
@@ -182,13 +184,19 @@ static void scanMatrix(uint8_t rows[8])
 // 做法照搬 rp2040-retro-editor/src/hw_dpad.c，那是同一塊板子同一組 GPIO。
 // ============================================================================
 
-static const struct { uint8_t gpio; uint8_t code; } BTN[] = {
-    { PIN_BTN_UP,     KEY_UP    },
-    { PIN_BTN_DOWN,   KEY_DOWN  },
-    { PIN_BTN_LEFT,   KEY_LEFT  },
-    { PIN_BTN_RIGHT,  KEY_RIGHT },
-    { PIN_BTN_A,      KEY_PGUP  },
-    { PIN_BTN_B,      KEY_PGDN  },
+// repeat = 0 的那顆**不可以連發**。KEY_F1 是發音：連發會讓一個字被打斷重唸
+// 好幾次，實機症狀是「ap ap approach」（HANDOVER 有這一段）。手指按著 START
+// 本來就會比按方向鍵久 —— 唸一次要先合成再重畫，很容易就超過 400ms 門檻。
+// 這跟 keys.c 的 is_command() 是同一個判斷，只是那支的版本沒有匯出。
+static const struct { uint8_t gpio; uint8_t code; uint8_t repeat; } BTN[] = {
+    { PIN_BTN_UP,     KEY_UP    , 1 },
+    { PIN_BTN_DOWN,   KEY_DOWN  , 1 },
+    { PIN_BTN_LEFT,   KEY_LEFT  , 1 },
+    { PIN_BTN_RIGHT,  KEY_RIGHT , 1 },
+    { PIN_BTN_A,      KEY_PGUP  , 1 },
+    { PIN_BTN_B,      KEY_PGDN  , 1 },
+    { PIN_BTN_SELECT, KEY_PGDN  , 1 },
+    { PIN_BTN_START,  KEY_F1    , 0 },
 };
 #define BTN_N ((int)(sizeof BTN / sizeof BTN[0]))
 
@@ -200,7 +208,6 @@ static uint32_t g_btn_repeat_at;
 
 static void dpadInit()
 {
-    // SELECT(28) / START(4) 這裡沒用到，就不去動它們的腳位設定。
     for (int i = 0; i < BTN_N; i++) {
         gpio_init(BTN[i].gpio);
         gpio_set_dir(BTN[i].gpio, GPIO_IN);
@@ -251,6 +258,7 @@ static int dpadPoll(int n, key_event *out, int max)
                 g_btn_repeat_i = -1;
             }
         } else if (now_down && is_stable && g_btn_repeat_i == i &&
+                   BTN[i].repeat &&
                    (int32_t)(now - g_btn_repeat_at) >= 0) {
             // 按住不放 -> 連發。方向鍵沒有連發的話，選候選字得一下一下點。
             n = dpadEmit(n, out, max, BTN[i].code, 1);
