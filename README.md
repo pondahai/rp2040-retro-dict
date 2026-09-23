@@ -196,5 +196,13 @@ CC-CEDICT（CC-BY-SA）、Noto（SIL OFL 1.1）。
 `RetroDict/TFT_DMA.*` 取自 PicoApple2、`RetroDict/audio.c` 取自
 rp2040-ili9341-infones（同為 GPL-3.0）。
 
-注音碼表取自 `pico_keyboard_ime_terminal` —— **該 repo 沒有 LICENSE 檔，
-碼表出處也未寫明，散布前需要補上來源**。
+注音碼表取自 `pico_keyboard_ime_terminal`，其上游是
+[McBopomofo](https://github.com/openvanilla/McBopomofo)（小麥注音輸入法），
+授權為 **MIT**，Copyright (c) 2011-2026 Mengjuei Hsieh et al.
+
+使用的是 `BPMFBase.txt`（單字注音）與 `BPMFPunctuations.txt`（標點），
+兩者在上游皆無額外出處註記。帶有 libtabe（BSD）血統的是多字詞庫
+`BPMFMappings.txt` —— **本專案未使用**（這裡是單字候選，不是詞庫）。
+
+MIT 與 GPL-3.0 相容，碼表資料以 MIT 條款收錄於本 GPL-3.0 專案中；
+散布時須一併保留 McBopomofo 的著作權聲明與授權條文。
