@@ -17,7 +17,11 @@ setlocal
 set CLI=%~1
 if "%CLI%"=="" set CLI=arduino-cli
 set HERE=%~dp0
+rem Keyboard QH wiring: set KBD_SHARED_DATA=1 in the environment for boards
+rem with the 165 QH moved to GP15 (see README). Unset/0 = original GP27.
+set "KBD_DEF="
+if defined KBD_SHARED_DATA set "KBD_DEF=-DKBD_SHARED_DATA=%KBD_SHARED_DATA%"
 "%CLI%" compile --fqbn rp2040:rp2040:rpipico ^
   --build-property "compiler.c.extra_flags=-I%HERE%firmware" ^
-  --build-property "compiler.cpp.extra_flags=-I%HERE%firmware" ^
+  --build-property "compiler.cpp.extra_flags=-I%HERE%firmware %KBD_DEF%" ^
   --output-dir "%HERE%build" "%HERE%RetroDict"

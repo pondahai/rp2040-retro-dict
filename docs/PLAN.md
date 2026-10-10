@@ -26,7 +26,7 @@
 |---|---|---|
 | MCU | Raspberry Pi Pico (RP2040)，可超頻 ~250MHz | 生態系共用 |
 | 顯示 | ILI9341 320×240，**spi0**；SCK18 MOSI19 CS17 DC20 RST21 BL22（無 MISO） | PicoApple2-KeyboardTester README |
-| 鍵盤 | 8×8 矩陣 64 鍵，74HC595 驅動列 / 74HC165 讀行；DATA_OUT15 LATCH14 CLOCK26 DATA_IN27 | 同上 |
+| 鍵盤 | 8×8 矩陣 64 鍵，74HC595 驅動列 / 74HC165 讀行；DATA_OUT15 LATCH14 CLOCK26 DATA_IN27（硬體改版：QH 經 1 kΩ 併入 GP15，GP27 空出給 ADC，見 README「鍵盤 QH 改接」） | 同上 |
 | SD 卡 | **spi1**；CS13 SCK10 MOSI11 MISO12 | rp2040-ili9341-infones README:248 |
 | 音訊 | 1-bit PWM → RC 低通 → PAM8403 → 喇叭 | 生態系共用 |
 

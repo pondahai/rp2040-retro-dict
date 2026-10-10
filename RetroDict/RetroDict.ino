@@ -52,7 +52,20 @@ extern "C" {
 #define DATA_OUT_PIN     15
 #define LATCH_PIN        14
 #define CLOCK_PIN        26
+// KBD_SHARED_DATA = 1：硬體改過的機器 —— 165 的 QH 經 1 kΩ 接到 GP15，跟 595
+// 的 SER 共用一支腳；GP27 割開留給 ADC。寫 595 時 GP15 為輸出（隔著 1 kΩ 蓋過
+// QH），讀 165 時切成輸入。預設 0 = 原本的接線（QH 在 GP27）。
+#ifndef KBD_SHARED_DATA
+#define KBD_SHARED_DATA  0
+#endif
+#define ADC_SPARE_PIN    27
+#if KBD_SHARED_DATA
+#define DATA_IN_PIN      DATA_OUT_PIN
+#define KBD_MODE_STR     "kbd QH on GP15"
+#else
 #define DATA_IN_PIN      27
+#define KBD_MODE_STR     "kbd QH on GP27"
+#endif
 
 // ---- 遊戲按鍵（8 顆直接接 GPIO，active-low、內部上拉）----
 // 接腳表的單一事實來源是 rp2040-retro-handheld/docs/HARDWARE.md。
@@ -146,12 +159,22 @@ static void scanMatrix(uint8_t rows[8])
     for (int row = 0; row < 8; row++) {
         uint8_t rS = (uint8_t)(1 << row);
         fastWrite(LATCH_PIN, 0);
+#if KBD_SHARED_DATA
+        gpio_set_dir(DATA_OUT_PIN, GPIO_OUT);
+#endif
         shiftOut(DATA_OUT_PIN, CLOCK_PIN, MSBFIRST, 0);
         shiftOut(DATA_OUT_PIN, CLOCK_PIN, MSBFIRST, rS);
         fastWrite(LATCH_PIN, 1); delayMicroseconds(5);
         fastWrite(LATCH_PIN, 0); delayMicroseconds(1);
         fastWrite(LATCH_PIN, 1);
 
+        // 共用 SER/QH 時，下面這 8 個 CLOCK 會把 QH 推進 595 的移位暫存器。
+        // 無害的前提：595 的輸出只在 RCLK（= LATCH）上升時更新，而下一次上升
+        // 之前，下一列一定先 shiftOut 16 bit 把它整個重寫。改這段順序時要守住。
+#if KBD_SHARED_DATA
+        gpio_set_dir(DATA_OUT_PIN, GPIO_IN);
+        delayMicroseconds(1);
+#endif
         uint8_t colData = myShiftIn(DATA_IN_PIN, CLOCK_PIN);
         uint8_t bits = 0;
         for (int col = 0; col < 8; col++)
@@ -628,7 +651,17 @@ void setup()
     gpio_init(DATA_OUT_PIN); gpio_set_dir(DATA_OUT_PIN, GPIO_OUT);
     gpio_init(LATCH_PIN);    gpio_set_dir(LATCH_PIN, GPIO_OUT);
     gpio_init(CLOCK_PIN);    gpio_set_dir(CLOCK_PIN, GPIO_OUT);
+#if KBD_SHARED_DATA
+    // 預設約 50k 下拉會跟 1 kΩ 分壓；平常停在輸入，scanMatrix() 寫 595 前才切輸出。
+    gpio_disable_pulls(DATA_OUT_PIN);
+    gpio_set_dir(DATA_OUT_PIN, GPIO_IN);
+    // GP27 割開了，留著當 ADC：輸入、不上下拉。
+    gpio_init(ADC_SPARE_PIN); gpio_set_dir(ADC_SPARE_PIN, GPIO_IN);
+    gpio_disable_pulls(ADC_SPARE_PIN);
+#else
     gpio_init(DATA_IN_PIN);  gpio_set_dir(DATA_IN_PIN, GPIO_IN);
+#endif
+    Serial.println(KBD_MODE_STR);
     dpadInit();
 
     display_begin();

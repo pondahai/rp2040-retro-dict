@@ -105,6 +105,23 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
 只會在實機上變成黑畫面，而且症狀跟「根本沒燒進去」一模一樣。選單封面圖
 `assets/RetroDict.ino.RAW` 也會一起複製過去，兩個檔案都要放 SD 卡**根目錄**。
 
+### 鍵盤 QH 改接（`KBD_SHARED_DATA`）
+
+有一種硬體改版：74HC165 的 QH 不接 GP27，改串 1 kΩ 接到 GP15，跟 595 的 SER
+共用一支腳，GP27 割開留給 ADC。這種板子要用 `KBD_SHARED_DATA=1` 編：
+
+```bash
+set KBD_SHARED_DATA=1 && build_offset.bat
+```
+
+沒設或設 0 就是原本的 GP27 接線。開機時序列埠會印 `kbd QH on GP15` 或
+`kbd QH on GP27`，燒錄後可以用來確認。兩種接線的韌體**不能互換**。
+
+共用腳的前提（`scanMatrix()` 改順序時要守住）：讀 165 的 8 個 CLOCK 會把 QH
+推進 595 的移位暫存器，所以每一次 LATCH 上升之前都必須先 `shiftOut` 把 16 bit
+整個重寫。現在的順序本來就是這樣：寫 595 → 鎖存 → 165 載入 → 讀，讀完不再
+鎖存。
+
 一般版（連結在 `0x10000000`，會蓋掉載入器，只適合單獨測試）：
 
 ```bash

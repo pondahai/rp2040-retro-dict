@@ -26,6 +26,10 @@ set "PYTHONIOENCODING=utf-8"
 :: ===========================================================================
 
 set "HERE=%~dp0"
+rem Keyboard QH wiring: set KBD_SHARED_DATA=1 in the environment for boards
+rem with the 165 QH moved to GP15 (see README). Unset/0 = original GP27.
+set "KBD_DEF="
+if defined KBD_SHARED_DATA set "KBD_DEF=-DKBD_SHARED_DATA=%KBD_SHARED_DATA%"
 set "CLI=%~1"
 if "%CLI%"=="" set "CLI=arduino-cli"
 set "LOADER=%~2"
@@ -53,7 +57,7 @@ echo [2/3] Compiling sketch (OFFSET, link at 0x10004000)...
 :: live in firmware\ and Arduino copies the sketch tree before compiling.
 "%CLI%" compile --fqbn rp2040:rp2040:rpipico ^
   --build-property "compiler.c.extra_flags=-I%HERE%firmware" ^
-  --build-property "compiler.cpp.extra_flags=-I%HERE%firmware" ^
+  --build-property "compiler.cpp.extra_flags=-I%HERE%firmware %KBD_DEF%" ^
   --build-property "recipe.hooks.linking.prelink.1.pattern=\"{runtime.tools.pqt-python3.path}/python3\" -I \"{runtime.platform.path}/tools/simplesub.py\" --input \"%OFFSET_LD%\" --out \"{build.path}/memmap_default.ld\" --sub __FLASH_LENGTH__ {build.flash_length} --sub __EEPROM_START__ {build.eeprom_start} --sub __FS_START__ {build.fs_start} --sub __FS_END__ {build.fs_end} --sub __RAM_LENGTH__ {build.ram_length} --sub __PSRAM_LENGTH__ {build.psram_length}" ^
   --output-dir "%OUT_DIR%" "%HERE%RetroDict"
 if %errorlevel% neq 0 ( echo [ERROR] Arduino build failed. & exit /b 1 )
