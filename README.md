@@ -122,6 +122,17 @@ set KBD_SHARED_DATA=1 && build_offset.bat
 整個重寫。現在的順序本來就是這樣：寫 595 → 鎖存 → 165 載入 → 讀，讀完不再
 鎖存。
 
+### 鍵盤 CLOCK 改接 LCD D/C（`KBD_CLK_ON_LCD_DC`）
+
+再進一步的改版：595/165 的 CLOCK 從 GP26 改接 LCD 的 D/C（GP20），GP26 空出來。
+LCD 只在 CS 低時取樣 D/C，所以掃描時 SPI 必須已經送完、CS 為高 ——
+目前畫面是單核同步送的，`scanMatrix()` 只在 `loop()` 跑，前提成立。
+要跟 `KBD_SHARED_DATA` 一起開：
+
+```bash
+set KBD_SHARED_DATA=1&& set KBD_CLK_ON_LCD_DC=1&& build_offset.bat
+```
+
 一般版（連結在 `0x10000000`，會蓋掉載入器，只適合單獨測試）：
 
 ```bash

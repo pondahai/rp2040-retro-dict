@@ -51,7 +51,22 @@ extern "C" {
 // ---- 鍵盤矩陣 ----
 #define DATA_OUT_PIN     15
 #define LATCH_PIN        14
+// KBD_CLK_ON_LCD_DC = 1：595/165 的 CLOCK 改接 LCD 的 D/C（GP20）。LCD 只在
+// CS 低時、SCK 邊緣取樣 D/C，所以只要掃描時 SPI 沒在傳、CS 是高的，D/C 怎麼跳
+// LCD 都不理；平常畫圖時 D/C 翻轉只會讓 595/165 多移幾位，LATCH 沒動就沒影響。
+// GP26 跟鍵盤無關了，設成高阻抗。需要 KBD_SHARED_DATA 一起開（新接線）。
+#ifndef KBD_CLK_ON_LCD_DC
+#define KBD_CLK_ON_LCD_DC 0
+#endif
+#if KBD_CLK_ON_LCD_DC
+#define CLOCK_PIN        PIN_DISPLAY_DC
+#define KBD_SPARE_PIN    26
+#if !KBD_SHARED_DATA
+#error "KBD_CLK_ON_LCD_DC 需要 KBD_SHARED_DATA=1（新接線兩者一起改）"
+#endif
+#else
 #define CLOCK_PIN        26
+#endif
 // KBD_SHARED_DATA = 1：硬體改過的機器 —— 165 的 QH 經 1 kΩ 接到 GP15，跟 595
 // 的 SER 共用一支腳；GP27 割開留給 ADC。寫 595 時 GP15 為輸出（隔著 1 kΩ 蓋過
 // QH），讀 165 時切成輸入。預設 0 = 原本的接線（QH 在 GP27）。
@@ -154,6 +169,68 @@ static uint8_t myShiftIn(uint8_t dP, uint8_t cP)
     return data;
 }
 
+#if KBD_CLK_ON_LCD_DC
+// CLOCK 現在是 LCD 的 D/C，走線長、還掛著 LCD 的輸入，所以慢慢打（半週期
+// 1 µs），也不把 GP20 調成 12 mA／快斜率。
+static void shiftOutSlow(uint8_t val)
+{
+    for (int i = 7; i >= 0; i--) {
+        fastWrite(DATA_OUT_PIN, (val >> i) & 1);
+        delayMicroseconds(1);
+        fastWrite(CLOCK_PIN, 1); delayMicroseconds(1);
+        fastWrite(CLOCK_PIN, 0);
+    }
+}
+
+static uint8_t shiftInSlow()
+{
+    uint8_t data = 0;
+    for (int i = 0; i < 8; i++) {
+        if (fastRead(DATA_IN_PIN))       // 先讀再打時脈
+            data |= (1 << i);
+        fastWrite(CLOCK_PIN, 1); delayMicroseconds(1);
+        fastWrite(CLOCK_PIN, 0); delayMicroseconds(1);
+    }
+    return data;
+}
+
+// 這台機器的畫面是單核、同步送的：blit()/blit_rows()/TFT_DMA 每一筆都在
+// 回來之前 waitTransferDone() 並拉高 CS，scanMatrix() 只在 loop() 裡呼叫，
+// 所以掃描時 LCD 一定不在傳輸。以後若把畫面改成非同步／另一核，這裡要加同步。
+// 下面仍再等一次、再拉一次 CS 保險，並還原 D/C 的電位。
+static void scanMatrix(uint8_t rows[8])
+{
+    tft.waitTransferDone();
+    fastWrite(PIN_DISPLAY_CS, 1);
+    bool dc = gpio_get_out_level(CLOCK_PIN);
+    fastWrite(CLOCK_PIN, 0);
+
+    for (int row = 0; row < 8; row++) {
+        gpio_set_dir(DATA_OUT_PIN, GPIO_OUT);
+        shiftOutSlow(0);
+        shiftOutSlow((uint8_t)(1 << row));
+        // LATCH 平常停在高：拉低 = 165 載入；拉回高的上升緣 = 595 鎖存。
+        // 所以這一列的 595 輸出要到這個上升緣才出現，165 載入的是上一列
+        // 的狀態 —— 載入要放在鎖存之後，先補一個上升緣再載入。
+        fastWrite(LATCH_PIN, 0); delayMicroseconds(1);
+        fastWrite(LATCH_PIN, 1); delayMicroseconds(5);   // 595 鎖存，列線穩定
+        fastWrite(LATCH_PIN, 0); delayMicroseconds(1);   // 165 載入
+        fastWrite(LATCH_PIN, 1);
+
+        // 讀 165 的 8 個 CLOCK 會把 QH 推進 595 —— 下一列先重寫 16 bit 才
+        // 鎖存，所以無害（同 KBD_SHARED_DATA 的說明）。
+        gpio_set_dir(DATA_OUT_PIN, GPIO_IN);
+        delayMicroseconds(1);
+        uint8_t colData = shiftInSlow();
+        uint8_t bits = 0;
+        for (int col = 0; col < 8; col++)
+            if (colData & (1 << (7 - col)))
+                bits |= (uint8_t)(1 << col);
+        rows[row] = bits;
+    }
+    fastWrite(CLOCK_PIN, dc);
+}
+#else
 static void scanMatrix(uint8_t rows[8])
 {
     for (int row = 0; row < 8; row++) {
@@ -184,6 +261,7 @@ static void scanMatrix(uint8_t rows[8])
     }
     fastWrite(CLOCK_PIN, 1); delayMicroseconds(2); fastWrite(CLOCK_PIN, 0);
 }
+#endif
 
 // ============================================================================
 // 遊戲按鍵（D-pad）—— 跟鍵盤矩陣同一種 key_event
@@ -650,7 +728,15 @@ void setup()
 
     gpio_init(DATA_OUT_PIN); gpio_set_dir(DATA_OUT_PIN, GPIO_OUT);
     gpio_init(LATCH_PIN);    gpio_set_dir(LATCH_PIN, GPIO_OUT);
+#if KBD_CLK_ON_LCD_DC
+    // CLOCK = LCD D/C，由 tft.begin() 初始化（預設驅動電流與斜率，不要調）。
+    // GP26 不再接鍵盤：輸入、不上下拉 = 高阻抗。
+    gpio_init(KBD_SPARE_PIN); gpio_set_dir(KBD_SPARE_PIN, GPIO_IN);
+    gpio_disable_pulls(KBD_SPARE_PIN);
+    fastWrite(LATCH_PIN, 1);                 // LATCH 閒置停在高
+#else
     gpio_init(CLOCK_PIN);    gpio_set_dir(CLOCK_PIN, GPIO_OUT);
+#endif
 #if KBD_SHARED_DATA
     // 預設約 50k 下拉會跟 1 kΩ 分壓；平常停在輸入，scanMatrix() 寫 595 前才切輸出。
     gpio_disable_pulls(DATA_OUT_PIN);

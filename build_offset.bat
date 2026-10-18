@@ -30,6 +30,8 @@ rem Keyboard QH wiring: set KBD_SHARED_DATA=1 in the environment for boards
 rem with the 165 QH moved to GP15 (see README). Unset/0 = original GP27.
 set "KBD_DEF="
 if defined KBD_SHARED_DATA set "KBD_DEF=-DKBD_SHARED_DATA=%KBD_SHARED_DATA%"
+rem KBD_CLK_ON_LCD_DC=1: keyboard CLOCK moved from GP26 to the LCD D/C pin (GP20).
+if defined KBD_CLK_ON_LCD_DC set "KBD_DEF=%KBD_DEF% -DKBD_CLK_ON_LCD_DC=%KBD_CLK_ON_LCD_DC%"
 set "CLI=%~1"
 if "%CLI%"=="" set "CLI=arduino-cli"
 set "LOADER=%~2"
