@@ -105,6 +105,8 @@ build_offset.bat [arduino-cli 的路徑] [rp2040-retro-loader 的路徑]
 只會在實機上變成黑畫面，而且症狀跟「根本沒燒進去」一模一樣。選單封面圖
 `assets/RetroDict.ino.RAW` 也會一起複製過去，兩個檔案都要放 SD 卡**根目錄**。
 
+> **2026-11 起預設改為現行接線**：下面兩項硬體修改已是標準配置（見 [rp2040-retro-handheld docs/HARDWARE.md §2.2](https://github.com/pondahai/rp2040-retro-handheld/blob/main/docs/HARDWARE.md)），兩個開關預設都是開。下文「要加參數才開」的敘述是當時的寫法；現在反過來，**舊接線的機器**才要關掉：`set KBD_SHARED_DATA=0&& set KBD_CLK_ON_LCD_DC=0&& build_offset.bat`。
+
 ### 鍵盤 QH 改接（`KBD_SHARED_DATA`）
 
 有一種硬體改版：74HC165 的 QH 不接 GP27，改串 1 kΩ 接到 GP15，跟 595 的 SER

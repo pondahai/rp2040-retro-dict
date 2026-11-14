@@ -55,8 +55,12 @@ extern "C" {
 // CS 低時、SCK 邊緣取樣 D/C，所以只要掃描時 SPI 沒在傳、CS 是高的，D/C 怎麼跳
 // LCD 都不理；平常畫圖時 D/C 翻轉只會讓 595/165 多移幾位，LATCH 沒動就沒影響。
 // GP26 跟鍵盤無關了，設成高阻抗。需要 KBD_SHARED_DATA 一起開（新接線）。
+// 預設 1 = 現行接線（rp2040-retro-handheld docs/HARDWARE.md §2.2）；舊接線編譯時給 =0。
+#ifndef KBD_SHARED_DATA
+#define KBD_SHARED_DATA  1
+#endif
 #ifndef KBD_CLK_ON_LCD_DC
-#define KBD_CLK_ON_LCD_DC 0
+#define KBD_CLK_ON_LCD_DC 1
 #endif
 #if KBD_CLK_ON_LCD_DC
 #define CLOCK_PIN        PIN_DISPLAY_DC
@@ -69,10 +73,7 @@ extern "C" {
 #endif
 // KBD_SHARED_DATA = 1：硬體改過的機器 —— 165 的 QH 經 1 kΩ 接到 GP15，跟 595
 // 的 SER 共用一支腳；GP27 割開留給 ADC。寫 595 時 GP15 為輸出（隔著 1 kΩ 蓋過
-// QH），讀 165 時切成輸入。預設 0 = 原本的接線（QH 在 GP27）。
-#ifndef KBD_SHARED_DATA
-#define KBD_SHARED_DATA  0
-#endif
+// QH），讀 165 時切成輸入。設 0 = 舊接線（QH 在 GP27）。預設值定義在上方。
 #define ADC_SPARE_PIN    27
 #if KBD_SHARED_DATA
 #define DATA_IN_PIN      DATA_OUT_PIN

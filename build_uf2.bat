@@ -17,8 +17,8 @@ setlocal
 set CLI=%~1
 if "%CLI%"=="" set CLI=arduino-cli
 set HERE=%~dp0
-rem Keyboard QH wiring: set KBD_SHARED_DATA=1 in the environment for boards
-rem with the 165 QH moved to GP15 (see README). Unset/0 = original GP27.
+rem Keyboard wiring: firmware defaults to the current wiring (QH on GP15,
+rem CLOCK on GP20). For OLD boards set KBD_SHARED_DATA=0 and KBD_CLK_ON_LCD_DC=0.
 set "KBD_DEF="
 if defined KBD_SHARED_DATA set "KBD_DEF=-DKBD_SHARED_DATA=%KBD_SHARED_DATA%"
 rem KBD_CLK_ON_LCD_DC=1: keyboard CLOCK moved from GP26 to the LCD D/C pin (GP20).
