@@ -220,6 +220,8 @@ static void scanMatrix(uint8_t rows[8])
 
         // 讀 165 的 8 個 CLOCK 會把 QH 推進 595 —— 下一列先重寫 16 bit 才
         // 鎖存，所以無害（同 KBD_SHARED_DATA 的說明）。
+        // 切輸入前先主動拉低放電，避免未接鍵盤硬體時殘留 Row 0 高電位造成鬼鍵。
+        fastWrite(DATA_OUT_PIN, 0);
         gpio_set_dir(DATA_OUT_PIN, GPIO_IN);
         delayMicroseconds(1);
         uint8_t colData = shiftInSlow();
@@ -250,6 +252,7 @@ static void scanMatrix(uint8_t rows[8])
         // 無害的前提：595 的輸出只在 RCLK（= LATCH）上升時更新，而下一次上升
         // 之前，下一列一定先 shiftOut 16 bit 把它整個重寫。改這段順序時要守住。
 #if KBD_SHARED_DATA
+        fastWrite(DATA_OUT_PIN, 0);
         gpio_set_dir(DATA_OUT_PIN, GPIO_IN);
         delayMicroseconds(1);
 #endif
@@ -739,8 +742,10 @@ void setup()
     gpio_init(CLOCK_PIN);    gpio_set_dir(CLOCK_PIN, GPIO_OUT);
 #endif
 #if KBD_SHARED_DATA
-    // 預設約 50k 下拉會跟 1 kΩ 分壓；平常停在輸入，scanMatrix() 寫 595 前才切輸出。
-    gpio_disable_pulls(DATA_OUT_PIN);
+    // 啟用內部下拉（~50kΩ，即使並聯外部 47kΩ 下拉，與 1 kΩ 分壓仍有 ~3.17V），
+    // 防止未接鍵盤時浮接誤觸；平常停在輸入，scanMatrix() 寫 595 前才切輸出。
+    gpio_pull_down(DATA_OUT_PIN);
+    fastWrite(DATA_OUT_PIN, 0);
     gpio_set_dir(DATA_OUT_PIN, GPIO_IN);
     // GP27 割開了，留著當 ADC：輸入、不上下拉。
     gpio_init(ADC_SPARE_PIN); gpio_set_dir(ADC_SPARE_PIN, GPIO_IN);
